@@ -1,0 +1,11 @@
+[package]
+edition = "2018"
+name = "dotup"
+version = "0.1.0"
+
+[dependencies]
+log = "*"
+serde = { version = "*", features = ["derive"] }
+thiserror = "*"
+toml = "*"
+slotmap = "*"

@@ -1,0 +1,7 @@
+[[links]]
+origin = 'neovim/init.vim'
+destination = '.config/nvim/init.vim'
+
+[[links]]
+origin = 'neovim/lua/setup.lua'
+destination = '.config/nvim/lua/setup.lua'
