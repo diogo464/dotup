@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use crate::prelude::*;
 
+const DEFAULT_DEPOT_NAME: &str = "depot.toml";
+
 pub fn home_directory() -> anyhow::Result<PathBuf> {
     match std::env::var("HOME") {
         Ok(val) => Ok(PathBuf::from(val)),
@@ -10,6 +12,18 @@ pub fn home_directory() -> anyhow::Result<PathBuf> {
             Err(e.into())
         }
     }
+}
+
+pub fn find_archive_path() -> anyhow::Result<PathBuf> {
+    let mut start = PathBuf::new();
+    while {
+        start.push(DEFAULT_DEPOT_NAME);
+        !start.is_file()
+    } {
+        start.pop();
+        start.push("..");
+    }
+    Ok(start.canonicalize()?)
 }
 
 pub fn write_archive(path: impl AsRef<Path>, archive: &Archive) -> anyhow::Result<()> {

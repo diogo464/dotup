@@ -12,6 +12,7 @@ pub mod prelude {
 }
 
 use clap::{AppSettings, Clap};
+use commands::utils;
 use flexi_logger::Logger;
 use std::{
     collections::HashMap,
@@ -21,14 +22,15 @@ use std::{
 
 use prelude::*;
 
-const DEFAULT_DEPOT_NAME: &str = "depot.toml";
-
 #[derive(Clap)]
 #[clap(setting = AppSettings::ColoredHelp)]
 struct Opts {
     /// Path to the depot file.
-    #[clap(long, default_value = DEFAULT_DEPOT_NAME)]
-    depot: PathBuf,
+    ///
+    /// By default it will try to find a file named "depot.toml" in the current directory or any of
+    /// the parent directories.
+    #[clap(long)]
+    depot: Option<PathBuf>,
 
     /// Disable output to the console
     #[clap(short, long)]
@@ -76,9 +78,13 @@ fn main() -> anyhow::Result<()> {
             .start()?;
     }
 
-    let config = Config {
-        archive_path: opts.depot,
+    let archive_path = match opts.depot {
+        Some(path) => path,
+        None => utils::find_archive_path()?,
     };
+    log::debug!("Archive path : {}", archive_path.display());
+
+    let config = Config { archive_path };
 
     match opts.subcmd {
         SubCommand::Init(opts) => commands::init::main(config, opts),
