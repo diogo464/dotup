@@ -69,7 +69,7 @@ fn main() -> anyhow::Result<()> {
             0 => "warn",
             1 => "info",
             2 => "debug",
-            3 | _ => "trace",
+            _ => "trace",
         };
 
         Logger::try_with_env_or_str(log_level)?

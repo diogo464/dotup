@@ -1,13 +1,11 @@
 use std::path::{Component, Path, PathBuf};
 
-use crate::internal_prelude::*;
-
 pub fn is_file(path: impl AsRef<Path>) -> std::io::Result<bool> {
     let metadata = match std::fs::metadata(path) {
         Ok(metadata) => metadata,
         Err(e) => match e.kind() {
             std::io::ErrorKind::NotFound => return Ok(false),
-            _ => return Err(e.into()),
+            _ => return Err(e),
         },
     };
     Ok(metadata.is_file())
@@ -18,7 +16,7 @@ pub fn is_directory(path: impl AsRef<Path>) -> std::io::Result<bool> {
         Ok(metadata) => metadata,
         Err(e) => match e.kind() {
             std::io::ErrorKind::NotFound => return Ok(false),
-            _ => return Err(e.into()),
+            _ => return Err(e),
         },
     };
     Ok(metadata.is_dir())

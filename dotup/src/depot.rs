@@ -133,9 +133,7 @@ impl Link {
     }
 
     fn install_destination(&self, install_base: &Path) -> std::io::Result<PathBuf> {
-        Ok(utils::weakly_canonical(
-            install_base.join(self.destination()),
-        )?)
+        utils::weakly_canonical(install_base.join(self.destination()))
     }
 }
 
@@ -254,7 +252,7 @@ fn depot_archive(depot: &Depot) -> Archive {
     let mut links = Vec::new();
 
     for link in depot_links(depot) {
-        let archive_link = link_to_archive_link(&link);
+        let archive_link = link_to_archive_link(link);
         links.push(archive_link);
     }
 
@@ -266,7 +264,7 @@ fn depot_archive(depot: &Depot) -> Archive {
 fn depot_create_link(depot: &Depot, link_desc: LinkCreateParams) -> Result<Link, LinkCreateError> {
     // link_ensure_relative_path(&link_desc.origin)?;
     link_ensure_relative_path(&link_desc.destination)?;
-    debug_assert!(utils::is_canonical(&depot.base_path())?);
+    debug_assert!(utils::is_canonical(depot.base_path())?);
 
     let origin_joined = depot.base_path().join(&link_desc.origin);
     let origin_result = origin_joined.canonicalize();

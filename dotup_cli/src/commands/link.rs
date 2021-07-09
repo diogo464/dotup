@@ -43,7 +43,7 @@ pub fn main(config: Config, opts: Opts) -> anyhow::Result<()> {
         } else {
             let mut params = Vec::new();
             for origin in origins {
-                link(&depot, &origin, &destination, &origin, &mut params)?;
+                link(&depot, origin, destination, origin, &mut params)?;
             }
             params
         };
