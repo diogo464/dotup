@@ -9,6 +9,32 @@ use thiserror::Error;
 
 use crate::{internal_prelude::*, Archive, ArchiveLink};
 
+#[derive(Debug, Error)]
+pub enum LinkCreateError {
+    #[error("Link origin is outside depot base\nDepot : {}\nLink : {}", .depot_base.display(), .origin.display())]
+    LinkOriginOutsideDepot {
+        depot_base: PathBuf,
+        origin: PathBuf,
+    },
+    #[error("Link path is not relative : {}", .0.display())]
+    LinkPathIsNotRelative(PathBuf),
+    #[error("Link origin doesnt exist : {}", .0.display())]
+    LinkOriginDoesntExist(PathBuf),
+    #[error(transparent)]
+    IOError(#[from] std::io::Error),
+}
+
+#[derive(Debug, Error)]
+pub enum LinkInstallError {
+    #[error(transparent)]
+    IOError(#[from] std::io::Error),
+    #[error("File already exists at {}", .0.display())]
+    FileExists(PathBuf, Metadata),
+    /// .0 = LinkPath , .1 = LinkDestination
+    #[error("Link already exists {} -> {}", .0.display(), .1.display())]
+    LinkExists(PathBuf, PathBuf),
+}
+
 #[derive(Debug)]
 pub struct DepotConfig {
     /// The archive used to initialize the depot.
@@ -132,7 +158,7 @@ impl Depot {
 
     /// Creates a new link from the description.
     /// The origin path must exist.
-    pub fn create_link(&mut self, link_desc: LinkDesc) -> Result<LinkID> {
+    pub fn create_link(&mut self, link_desc: LinkDesc) -> Result<LinkID, LinkCreateError> {
         let link = depot_create_link(self, link_desc)?;
         let link_id = depot_insert_link(self, link);
         Ok(link_id)
@@ -222,7 +248,7 @@ fn depot_archive(depot: &Depot) -> Archive {
 
 /// Create a valid link for that given Depot using the given link desc.
 /// The link id is corrected when the link is inserted in the depot.
-fn depot_create_link(depot: &Depot, link_desc: LinkDesc) -> Result<Link> {
+fn depot_create_link(depot: &Depot, link_desc: LinkDesc) -> Result<Link, LinkCreateError> {
     // link_ensure_relative_path(&link_desc.origin)?;
     link_ensure_relative_path(&link_desc.destination)?;
     debug_assert!(utils::is_canonical(&depot.base_path())?);
@@ -233,14 +259,14 @@ fn depot_create_link(depot: &Depot, link_desc: LinkDesc) -> Result<Link> {
         Ok(canonical) => canonical,
         Err(e) => match e.kind() {
             std::io::ErrorKind::NotFound => {
-                return Err(Error::LinkOriginDoesntExist(origin_joined))
+                return Err(LinkCreateError::LinkOriginDoesntExist(origin_joined))
             }
             _ => return Err(e.into()),
         },
     };
 
     if !origin_canonical.starts_with(depot.base_path()) {
-        return Err(Error::LinkOriginOutsideDepot {
+        return Err(LinkCreateError::LinkOriginOutsideDepot {
             depot_base: depot.base_path().to_path_buf(),
             origin: origin_canonical,
         });
@@ -268,17 +294,6 @@ fn depot_get_link(depot: &Depot, link_id: LinkID) -> Option<&Link> {
 
 fn depot_remove_link(depot: &mut Depot, link_id: LinkID) {
     depot.links.remove(link_id);
-}
-
-#[derive(Debug, Error)]
-pub enum LinkInstallError {
-    #[error(transparent)]
-    IOError(#[from] std::io::Error),
-    #[error("File already exists at {}", .0.display())]
-    FileExists(PathBuf, Metadata),
-    /// .0 = LinkPath , .1 = LinkDestination
-    #[error("Link already exists {} -> {}", .0.display(), .1.display())]
-    LinkExists(PathBuf, PathBuf),
 }
 
 fn depot_install_link(
@@ -365,9 +380,9 @@ fn depot_links(depot: &Depot) -> impl Iterator<Item = &Link> {
     depot.links.values()
 }
 
-fn link_ensure_relative_path(path: &Path) -> Result<()> {
+fn link_ensure_relative_path(path: &Path) -> Result<(), LinkCreateError> {
     if !path.is_relative() {
-        return Err(Error::LinkPathIsNotRelative(path.to_path_buf()));
+        return Err(LinkCreateError::LinkPathIsNotRelative(path.to_path_buf()));
     }
     Ok(())
 }

@@ -2,7 +2,7 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::internal_prelude::*;
 
-pub fn is_file(path: impl AsRef<Path>) -> Result<bool> {
+pub fn is_file(path: impl AsRef<Path>) -> std::io::Result<bool> {
     let metadata = match std::fs::metadata(path) {
         Ok(metadata) => metadata,
         Err(e) => match e.kind() {
@@ -13,7 +13,7 @@ pub fn is_file(path: impl AsRef<Path>) -> Result<bool> {
     Ok(metadata.is_file())
 }
 
-pub fn is_directory(path: impl AsRef<Path>) -> Result<bool> {
+pub fn is_directory(path: impl AsRef<Path>) -> std::io::Result<bool> {
     let metadata = match std::fs::metadata(path) {
         Ok(metadata) => metadata,
         Err(e) => match e.kind() {
@@ -24,7 +24,7 @@ pub fn is_directory(path: impl AsRef<Path>) -> Result<bool> {
     Ok(metadata.is_dir())
 }
 
-pub fn is_canonical(path: &Path) -> Result<bool> {
+pub fn is_canonical(path: &Path) -> std::io::Result<bool> {
     Ok(path == path.canonicalize()?.as_path())
 }
 
