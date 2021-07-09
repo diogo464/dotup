@@ -1,6 +1,11 @@
 # dotup
 A CLI tool to help symlink your dotfiles into place.
 
+## Installation
+```
+$ cargo install --git https://github.com/diogo464/dotup dotup_cli
+```
+
 ## Usage
 Example file hierarchy with dotfiles.
 ```
