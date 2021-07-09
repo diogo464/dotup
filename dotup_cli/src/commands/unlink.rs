@@ -1,4 +1,3 @@
-use clap::Clap;
 use std::{
     fs::{DirEntry, Metadata},
     path::{Path, PathBuf},
@@ -6,12 +5,19 @@ use std::{
 
 use super::prelude::*;
 
+/// Unlinks files/directories.
+///
+/// This will recursively remove links. If a path is a directory then it will remove all links
+/// recursively.
+/// The links are not uninstall by default, see the --uninstall parameter.
 #[derive(Clap)]
+#[clap(setting = AppSettings::ColoredHelp)]
 pub struct Opts {
-    /// Specifies the install base if the links are also to be uninstalled.
+    /// Specify the install base if the links are also to be uninstalled.
     #[clap(long)]
     uninstall: Option<PathBuf>,
 
+    /// The paths to unlink.
     #[clap(required = true, min_values = 1)]
     paths: Vec<PathBuf>,
 }

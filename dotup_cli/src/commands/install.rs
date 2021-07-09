@@ -1,16 +1,20 @@
-use clap::Clap;
 use std::path::PathBuf;
 
 use super::prelude::*;
 
+/// Install links. (Creates symlinks).
+///
+/// Installing a link will create the necessary directories.
+/// If a file or directory already exists at the location a link would be installed this command will fail.
 #[derive(Clap)]
+#[clap(setting = AppSettings::ColoredHelp)]
 pub struct Opts {
     /// The location where links will be installed to.
-    /// Defaults to home directory.
+    /// Defaults to the home directory.
     #[clap(long)]
     install_base: Option<PathBuf>,
 
-    /// The files/directories to install
+    /// The files/directories to install.
     #[clap(required = true, min_values = 1)]
     paths: Vec<PathBuf>,
 }

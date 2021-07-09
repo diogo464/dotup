@@ -1,16 +1,21 @@
-use clap::Clap;
 use std::path::PathBuf;
 
 use super::prelude::*;
 
+/// Uninstalls links. (Removes symlinks).
+///
+/// Uninstalling a link for a file that didnt have a link will do nothing.
+/// Uninstalling a directory will recursively uninstall all files under it.
+/// Symlinks are only deleted if they were pointing to the correct file.
 #[derive(Clap)]
+#[clap(setting = AppSettings::ColoredHelp)]
 pub struct Opts {
     /// The location where links will be uninstalled from.
     /// Defaults to home directory.
     #[clap(long)]
     install_base: Option<PathBuf>,
 
-    /// The files/directories to uninstall
+    /// The files/directories to uninstall.
     #[clap(required = true, min_values = 1)]
     paths: Vec<PathBuf>,
 }

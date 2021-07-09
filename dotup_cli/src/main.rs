@@ -7,6 +7,7 @@ pub use config::Config;
 
 pub mod prelude {
     pub use super::Config;
+    pub use clap::{AppSettings, Clap};
     pub use dotup::{Archive, Depot, DepotConfig, Link, LinkCreateParams, LinkID};
 }
 
@@ -23,7 +24,6 @@ use prelude::*;
 const DEFAULT_DEPOT_NAME: &str = "depot.toml";
 
 #[derive(Clap)]
-#[clap(version = "0.1", author = "d464")]
 #[clap(setting = AppSettings::ColoredHelp)]
 struct Opts {
     /// Path to the depot file.
@@ -37,8 +37,11 @@ struct Opts {
     /// A level of verbosity, and can be used multiple times
     ///
     /// Level 0 - Warnings (Default)
+    ///
     /// Level 1 - Info
+    ///
     /// Level 2 - Debug
+    ///
     /// Level 3 - Trace
     #[clap(short, long, parse(from_occurrences))]
     verbose: i32,

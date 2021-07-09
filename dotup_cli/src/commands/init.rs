@@ -1,8 +1,11 @@
-use clap::Clap;
-
 use super::prelude::*;
 
+/// Creates an empty depot file if one doesnt already exist.
+///
+/// By default this will create the file in the current directory
+/// but the --depot flag can be used to change this path.
 #[derive(Clap)]
+#[clap(setting = AppSettings::ColoredHelp)]
 pub struct Opts {}
 
 pub fn main(config: Config, opts: Opts) -> anyhow::Result<()> {

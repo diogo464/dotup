@@ -1,4 +1,3 @@
-use clap::Clap;
 use std::{
     fs::{DirEntry, Metadata},
     path::{Path, PathBuf},
@@ -6,11 +5,20 @@ use std::{
 
 use super::prelude::*;
 
+/// Creates links
+///
+/// If a link is created for a file that already had a link then the old link will be overwritten.
+/// By default creating a link to a directory will recursively link all files under that
+/// directory, to actually link a directory use the --directory flag.
 #[derive(Clap)]
+#[clap(setting = AppSettings::ColoredHelp)]
 pub struct Opts {
+    /// Treats the paths as directories. This will create links to the actual directories instead
+    /// of recursively linking all files under them.
     #[clap(long)]
     directory: bool,
 
+    /// The paths to link. The last path is the destination.
     paths: Vec<PathBuf>,
 }
 
