@@ -2,17 +2,17 @@
 
 pub mod commands;
 pub mod config;
+pub mod utils;
 
 pub use config::Config;
 
 pub mod prelude {
-    pub use super::Config;
+    pub use super::{utils, Config};
     pub use clap::{AppSettings, Clap};
     pub use dotup::{Archive, Depot, DepotConfig, Link, LinkCreateParams, LinkID};
 }
 
 use clap::{AppSettings, Clap};
-use commands::utils;
 use flexi_logger::Logger;
 use std::{
     collections::HashMap,
