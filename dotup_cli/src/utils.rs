@@ -78,9 +78,17 @@ pub fn read_depot(archive_path: impl AsRef<Path>) -> anyhow::Result<Depot> {
     let archive = read_archive(&archive_path)?;
     let depot_config = DepotConfig {
         archive_path,
-        archive,
+        archive: Default::default(),
     };
-    let depot = Depot::new(depot_config)?;
+    let mut depot = Depot::new(depot_config)?;
+
+    for archive_link in archive.links {
+        let link_params = LinkCreateParams::from(archive_link);
+        if let Err(e) = depot.create_link(link_params) {
+            log::warn!("Error while adding link : {}", e);
+        }
+    }
+
     Ok(depot)
 }
 
