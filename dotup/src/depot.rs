@@ -1,5 +1,6 @@
 use slotmap::SlotMap;
 use std::{
+    collections::HashMap,
     fs::Metadata,
     path::{Path, PathBuf},
     sync::Arc,
@@ -121,6 +122,7 @@ pub struct Depot {
     shared: Arc<DepotShared>,
     // Maps the origin to the link
     links: SlotMap<LinkID, Link>,
+    links_by_origin: HashMap<PathBuf, LinkID>,
 }
 
 impl Depot {
@@ -195,6 +197,7 @@ fn depot_create(config: DepotConfig) -> Result<Depot> {
     let mut depot = Depot {
         shared: Arc::new(depot_shared),
         links: Default::default(),
+        links_by_origin: Default::default(),
     };
 
     for archive_link in config.archive.links {
@@ -346,10 +349,16 @@ fn depot_uninstall_link(_depot: &Depot, link: &Link, install_base: &Path) -> Res
 }
 
 fn depot_insert_link(depot: &mut Depot, mut link: Link) -> LinkID {
-    depot.links.insert_with_key(move |k| {
+    let origin = link.origin().to_path_buf();
+    if let Some(link_id) = depot.links_by_origin.remove(&origin) {
+        depot.links.remove(link_id);
+    }
+    let link_id = depot.links.insert_with_key(move |k| {
         link.id = k;
         link
-    })
+    });
+    depot.links_by_origin.insert(origin, link_id);
+    link_id
 }
 
 fn depot_links(depot: &Depot) -> impl Iterator<Item = &Link> {
