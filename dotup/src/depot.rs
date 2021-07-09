@@ -304,7 +304,7 @@ fn depot_create_link(depot: &Depot, link_desc: LinkCreateParams) -> Result<Link,
         LinkType::Directory
     } else {
         for link in depot.links() {
-            if origin.starts_with(link.origin()) {
+            if origin.starts_with(link.origin()) && origin != link.origin() {
                 assert_eq!(link.link_type(), LinkType::Directory);
                 return Err(LinkCreateError::FileHasLinkedParent(origin));
             }

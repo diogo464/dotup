@@ -32,19 +32,25 @@ pub fn main(config: Config, opts: Opts) -> anyhow::Result<()> {
     };
 
     if let Some(destination) = destination {
-        let collected_paths = if opts.directory {
-            origins.to_vec()
+        let params = if opts.directory {
+            origins
+                .iter()
+                .map(|p| LinkCreateParams {
+                    origin: p.to_path_buf(),
+                    destination: destination.clone(),
+                })
+                .collect()
         } else {
-            collect_file_type(origins, FileType::File)?
+            let mut params = Vec::new();
+            for origin in origins {
+                link(&depot, &origin, &destination, &origin, &mut params)?;
+            }
+            params
         };
 
-        for path in collected_paths {
-            let link_desc = LinkCreateParams {
-                origin: path,
-                destination: destination.clone(),
-            };
-            log::info!("Creating link : {}", link_desc);
-            depot.create_link(link_desc)?;
+        for link_params in params {
+            log::info!("Creating link : {}", link_params);
+            depot.create_link(link_params)?;
         }
     } else {
         let base_path = match origins {
@@ -63,48 +69,62 @@ pub fn main(config: Config, opts: Opts) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum FileType {
-    File,
-    Directory,
+fn link(
+    depot: &Depot,
+    origin: &Path,
+    destination: &Path,
+    base: &Path,
+    params: &mut Vec<LinkCreateParams>,
+) -> anyhow::Result<()> {
+    let metadata = std::fs::metadata(origin)?;
+    if metadata.is_file() {
+        link_file(depot, origin, destination, base, params)?;
+    } else if metadata.is_dir() {
+        link_directory_recursive(depot, origin, destination, base, params)?;
+    }
+    Ok(())
 }
 
-/// Collects canonical files of the given type starting from, and including, entry_paths
-fn collect_file_type(
-    entry_paths: impl IntoIterator<Item = impl AsRef<Path>>,
-    collect_type: FileType,
-) -> anyhow::Result<Vec<PathBuf>> {
-    let entry_paths: Vec<PathBuf> = entry_paths
-        .into_iter()
-        .map(|p| p.as_ref().to_path_buf())
-        .collect();
-    let mut collected = Vec::new();
-    let mut pending: Vec<_> = entry_paths.iter().cloned().filter(|p| p.is_dir()).collect();
+fn link_file(
+    depot: &Depot,
+    origin: &Path,
+    destination: &Path,
+    base: &Path,
+    params: &mut Vec<LinkCreateParams>,
+) -> anyhow::Result<()> {
+    let origin_canonical = origin
+        .canonicalize()
+        .expect("Failed to canonicalize origin path");
+    let base_canonical = base
+        .canonicalize()
+        .expect("Failed to canonicalize base path");
 
-    for path in entry_paths {
-        let path = path.canonicalize()?;
-        if (path.is_file() && collect_type == FileType::File)
-            || (path.is_dir() && collect_type == FileType::Directory)
-        {
-            collected.push(path);
-        }
+    log::debug!("Origin canonical : {}", origin_canonical.display());
+    log::debug!("Base : {}", base.display());
+
+    let partial = origin_canonical
+        .strip_prefix(base_canonical)
+        .expect("Failed to remove prefix from origin path");
+    let destination = destination.join(partial);
+
+    let link_params = LinkCreateParams {
+        origin: origin_canonical,
+        destination,
+    };
+    params.push(link_params);
+    Ok(())
+}
+
+fn link_directory_recursive(
+    depot: &Depot,
+    dir_path: &Path,
+    destination: &Path,
+    base: &Path,
+    params: &mut Vec<LinkCreateParams>,
+) -> anyhow::Result<()> {
+    for origin in dir_path.read_dir()? {
+        let origin = origin?.path();
+        link(depot, &origin, destination, base, params)?;
     }
-
-    while let Some(dir_path) = pending.pop() {
-        for entry in dir_path.read_dir()? {
-            let entry = entry?;
-            let filetype = entry.file_type()?;
-
-            if filetype.is_file() && collect_type == FileType::File {
-                collected.push(entry.path());
-            } else if filetype.is_dir() {
-                if collect_type == FileType::Directory {
-                    collected.push(entry.path());
-                }
-                pending.push(entry.path());
-            }
-        }
-    }
-
-    Ok(collected)
+    Ok(())
 }
