@@ -7,7 +7,7 @@ pub use config::Config;
 
 pub mod prelude {
     pub use super::Config;
-    pub use dotup::{Archive, Depot, DepotConfig, Link, LinkDesc, LinkID};
+    pub use dotup::{Archive, Depot, DepotConfig, Link, LinkCreateParams, LinkID};
 }
 
 use clap::{AppSettings, Clap};

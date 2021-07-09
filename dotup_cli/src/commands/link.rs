@@ -25,7 +25,7 @@ pub fn main(config: Config, opts: Opts) -> anyhow::Result<()> {
 
     if let Some(destination) = destination {
         for path in collect_file_type(origins, FileType::File)? {
-            let link_desc = LinkDesc {
+            let link_desc = LinkCreateParams {
                 origin: path,
                 destination: destination.clone(),
             };

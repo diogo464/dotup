@@ -47,13 +47,13 @@ pub struct DepotConfig {
 slotmap::new_key_type! { pub struct LinkID; }
 
 #[derive(Debug)]
-pub struct LinkDesc {
+pub struct LinkCreateParams {
     pub origin: PathBuf,
     /// This must be a relative path
     pub destination: PathBuf,
 }
 
-impl LinkDesc {
+impl LinkCreateParams {
     pub fn new(origin: impl Into<PathBuf>, destination: impl Into<PathBuf>) -> Self {
         Self {
             origin: origin.into(),
@@ -62,7 +62,7 @@ impl LinkDesc {
     }
 }
 
-impl std::fmt::Display for LinkDesc {
+impl std::fmt::Display for LinkCreateParams {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -73,7 +73,7 @@ impl std::fmt::Display for LinkDesc {
     }
 }
 
-impl From<ArchiveLink> for LinkDesc {
+impl From<ArchiveLink> for LinkCreateParams {
     fn from(archive_link: ArchiveLink) -> Self {
         Self {
             origin: archive_link.origin,
@@ -158,7 +158,7 @@ impl Depot {
 
     /// Creates a new link from the description.
     /// The origin path must exist.
-    pub fn create_link(&mut self, link_desc: LinkDesc) -> Result<LinkID, LinkCreateError> {
+    pub fn create_link(&mut self, link_desc: LinkCreateParams) -> Result<LinkID, LinkCreateError> {
         let link = depot_create_link(self, link_desc)?;
         let link_id = depot_insert_link(self, link);
         Ok(link_id)
@@ -227,7 +227,7 @@ fn depot_create(config: DepotConfig) -> Result<Depot> {
     };
 
     for archive_link in config.archive.links {
-        let link_desc = LinkDesc::from(archive_link);
+        let link_desc = LinkCreateParams::from(archive_link);
         let link = depot_create_link(&depot, link_desc)?;
         depot_insert_link(&mut depot, link);
     }
@@ -248,7 +248,7 @@ fn depot_archive(depot: &Depot) -> Archive {
 
 /// Create a valid link for that given Depot using the given link desc.
 /// The link id is corrected when the link is inserted in the depot.
-fn depot_create_link(depot: &Depot, link_desc: LinkDesc) -> Result<Link, LinkCreateError> {
+fn depot_create_link(depot: &Depot, link_desc: LinkCreateParams) -> Result<Link, LinkCreateError> {
     // link_ensure_relative_path(&link_desc.origin)?;
     link_ensure_relative_path(&link_desc.destination)?;
     debug_assert!(utils::is_canonical(&depot.base_path())?);

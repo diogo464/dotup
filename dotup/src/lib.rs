@@ -8,7 +8,9 @@ pub use archive::{
     archive_deserialize, archive_exists, archive_read, archive_serialize, archive_write, Archive,
     ArchiveLink,
 };
-pub use depot::{Depot, DepotConfig, Link, LinkCreateError, LinkDesc, LinkID, LinkInstallError};
+pub use depot::{
+    Depot, DepotConfig, Link, LinkCreateError, LinkCreateParams, LinkID, LinkInstallError,
+};
 pub use error::{Error, Result};
 
 pub(crate) mod internal_prelude {
