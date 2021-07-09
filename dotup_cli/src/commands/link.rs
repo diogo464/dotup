@@ -24,7 +24,13 @@ pub fn main(config: Config, opts: Opts) -> anyhow::Result<()> {
     };
 
     if let Some(destination) = destination {
-        for path in collect_file_type(origins, FileType::File)? {
+        let collected_paths = if opts.directory {
+            origins.to_vec()
+        } else {
+            collect_file_type(origins, FileType::File)?
+        };
+
+        for path in collected_paths {
             let link_desc = LinkCreateParams {
                 origin: path,
                 destination: destination.clone(),

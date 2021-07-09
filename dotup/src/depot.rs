@@ -20,6 +20,10 @@ pub enum LinkCreateError {
     LinkPathIsNotRelative(PathBuf),
     #[error("Link origin doesnt exist : {}", .0.display())]
     LinkOriginDoesntExist(PathBuf),
+    #[error("Cannot create link for directory {} beacause it has a linked child", .0.display())]
+    DirectoryHasLinkedChildren(PathBuf),
+    #[error("Cannot create link for file {} beacause it has a linked parent", .0.display())]
+    FileHasLinkedParent(PathBuf),
     #[error(transparent)]
     IOError(#[from] std::io::Error),
 }
@@ -82,9 +86,16 @@ impl From<ArchiveLink> for LinkCreateParams {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum LinkType {
+    File,
+    Directory,
+}
+
 #[derive(Debug)]
 pub struct Link {
     id: LinkID,
+    ty: LinkType,
     /// The origin path, when joined with the depot base path, must be valid and it point to a file that exists.
     origin: PathBuf,
     /// Canonical version of origin
@@ -99,6 +110,10 @@ pub struct Link {
 impl Link {
     pub fn id(&self) -> LinkID {
         self.id
+    }
+
+    fn link_type(&self) -> LinkType {
+        self.ty
     }
 
     /// The relative path to the origin file. Relative from depot folder.
@@ -280,8 +295,26 @@ fn depot_create_link(depot: &Depot, link_desc: LinkCreateParams) -> Result<Link,
     // let origin = origin_canonical;
     let destination = link_desc.destination;
 
+    let ty = if origin.is_dir() {
+        for link in depot.links() {
+            if link.origin().starts_with(&origin) && link.origin() != origin {
+                return Err(LinkCreateError::DirectoryHasLinkedChildren(origin));
+            }
+        }
+        LinkType::Directory
+    } else {
+        for link in depot.links() {
+            if origin.starts_with(link.origin()) {
+                assert_eq!(link.link_type(), LinkType::Directory);
+                return Err(LinkCreateError::FileHasLinkedParent(origin));
+            }
+        }
+        LinkType::File
+    };
+
     Ok(Link {
         id: Default::default(),
+        ty,
         origin,
         origin_canonical,
         destination,
