@@ -1,0 +1,7 @@
+[[links]]
+origin = "o1/file1.txt"
+destination = "d1/file.txt"
+
+[[links]]
+origin = "o2/file2.txt"
+destination = "d2/d2/file.txt"
