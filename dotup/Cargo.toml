@@ -4,11 +4,11 @@ name = "dotup"
 version = "0.1.0"
 
 [dependencies]
-log = "*"
+log = "0.4"
 serde = { version = "*", features = ["derive"] }
-thiserror = "*"
-toml = "*"
-slotmap = "*"
+thiserror = "1.0"
+toml = "0.5"
+slotmap = "1.0"
 
 [dev-dependencies]
 tempfile = "3.2"
