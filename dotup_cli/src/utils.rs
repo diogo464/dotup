@@ -15,15 +15,18 @@ pub fn home_directory() -> anyhow::Result<PathBuf> {
 }
 
 pub fn find_archive_path() -> anyhow::Result<PathBuf> {
+    let cwd = std::env::current_dir()?;
+    let compn = cwd.components().count();
     let mut start = PathBuf::new();
-    while {
+    for _ in 0..=compn {
         start.push(DEFAULT_DEPOT_NAME);
-        !start.is_file()
-    } {
+        if dotup::archive_exists(&start) {
+            return Ok(start);
+        }
         start.pop();
         start.push("..");
     }
-    Ok(start.canonicalize()?)
+    Ok(PathBuf::from(DEFAULT_DEPOT_NAME))
 }
 
 pub fn write_archive(path: impl AsRef<Path>, archive: &Archive) -> anyhow::Result<()> {
