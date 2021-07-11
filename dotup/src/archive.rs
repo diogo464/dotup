@@ -3,13 +3,13 @@ use std::path::{Path, PathBuf};
 
 use crate::internal_prelude::*;
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArchiveLink {
     pub origin: PathBuf,
     pub destination: PathBuf,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Archive {
     pub links: Vec<ArchiveLink>,
 }
