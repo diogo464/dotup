@@ -132,7 +132,7 @@ impl Link {
         &self.destination
     }
 
-    fn install_destination(&self, install_base: &Path) -> std::io::Result<PathBuf> {
+    pub fn install_destination(&self, install_base: &Path) -> std::io::Result<PathBuf> {
         utils::weakly_canonical(install_base.join(self.destination()))
     }
 }
