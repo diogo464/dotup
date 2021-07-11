@@ -6,6 +6,7 @@ version = "0.1.0"
 [[bin]]
 name = "dotup"
 path = "src/main.rs"
+doc = false
 
 [dependencies]
 anyhow = "*"
@@ -18,3 +19,7 @@ path = "../dotup"
 [dependencies.flexi_logger]
 features = ["colors"]
 version = "*"
+
+[dev-dependencies]
+tempfile = "3.2"
+assert_cmd = "1.0"
