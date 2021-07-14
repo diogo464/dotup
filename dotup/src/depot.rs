@@ -70,7 +70,7 @@ impl std::fmt::Display for LinkCreateParams {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "LinkDesc[{} -> {}]",
+            "{} -> {}",
             self.origin.display(),
             self.destination.display()
         )
@@ -132,6 +132,7 @@ impl Link {
         &self.destination
     }
 
+    /// Where this link would be installed with the given `install_base`.
     pub fn install_destination(&self, install_base: &Path) -> std::io::Result<PathBuf> {
         utils::weakly_canonical(install_base.join(self.destination()))
     }
@@ -141,7 +142,7 @@ impl std::fmt::Display for Link {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Link[{} -> {}]",
+            "{} -> {}",
             self.origin().display(),
             self.destination().display()
         )

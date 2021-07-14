@@ -38,8 +38,6 @@ struct Opts {
 
     /// A level of verbosity, and can be used multiple times
     ///
-    /// Level 0 - Warnings (Default)
-    ///
     /// Level 1 - Info
     ///
     /// Level 2 - Debug
@@ -66,15 +64,14 @@ fn main() -> anyhow::Result<()> {
 
     if !opts.quiet {
         let log_level = match opts.verbose {
-            0 => "warn",
-            1 => "info",
-            2 => "debug",
+            0 => "info",
+            1 => "debug",
             _ => "trace",
         };
 
         Logger::try_with_env_or_str(log_level)?
             .format(flexi_logger::colored_default_format)
-            //.set_palette("196;208;32;198;15".to_string())
+            .set_palette("196;208;32;198;15".to_string())
             .start()?;
     }
 

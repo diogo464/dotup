@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::VecDeque,
+    path::{Path, PathBuf},
+};
 
 use crate::prelude::*;
 
@@ -122,4 +125,27 @@ pub fn collect_link_ids_by_base_paths(
         .into_iter()
         .map(|l| l.id())
         .collect()
+}
+
+/// Returns a list of canonical paths to all the files in `dir`. This includes files in
+/// subdirectories.
+/// Fails if dir isnt a directory or if there is some other io error.
+pub fn collect_files_in_dir(dir: impl Into<PathBuf>) -> anyhow::Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    let mut dirs = VecDeque::new();
+    dirs.push_back(dir.into());
+
+    while let Some(dir) = dirs.pop_front() {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let filetype = entry.file_type()?;
+            if filetype.is_dir() {
+                dirs.push_back(entry.path());
+            } else {
+                paths.push(entry.path());
+            }
+        }
+    }
+
+    Ok(paths)
 }

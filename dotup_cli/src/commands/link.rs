@@ -106,9 +106,12 @@ fn link_file(
         .strip_prefix(base_canonical)
         .expect("Failed to remove prefix from origin path");
     let destination = destination.join(partial);
+    let origin = origin_canonical
+        .strip_prefix(depot.base_path())
+        .unwrap_or(&origin_canonical);
 
     let link_params = LinkCreateParams {
-        origin: origin_canonical,
+        origin: origin.to_path_buf(),
         destination,
     };
     params.push(link_params);
