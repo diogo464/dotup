@@ -16,7 +16,7 @@ pub struct Opts {
     install_base: Option<PathBuf>,
 
     /// The files/directories to uninstall.
-    #[clap(required = true, min_values = 1)]
+    #[clap(required = true, min_values = 1, default_value = ".")]
     paths: Vec<PathBuf>,
 }
 
