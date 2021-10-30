@@ -10,8 +10,7 @@ use super::prelude::*;
 /// If a link is created for a file that already had a link then the old link will be overwritten.
 /// By default creating a link to a directory will recursively link all files under that
 /// directory, to actually link a directory use the --directory flag.
-#[derive(Clap)]
-#[clap(setting = AppSettings::ColoredHelp)]
+#[derive(Parser)]
 pub struct Opts {
     /// Treats the paths as directories. This will create links to the actual directories instead
     /// of recursively linking all files under them.

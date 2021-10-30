@@ -7,8 +7,7 @@ use super::prelude::*;
 /// Uninstalling a link for a file that didnt have a link will do nothing.
 /// Uninstalling a directory will recursively uninstall all files under it.
 /// Symlinks are only deleted if they were pointing to the correct file.
-#[derive(Clap)]
-#[clap(setting = AppSettings::ColoredHelp)]
+#[derive(Parser)]
 pub struct Opts {
     /// The location where links will be uninstalled from.
     /// Defaults to home directory.
@@ -16,7 +15,7 @@ pub struct Opts {
     install_base: Option<PathBuf>,
 
     /// The files/directories to uninstall.
-    #[clap(required = true, min_values = 1, default_value = ".")]
+    #[clap(min_values = 1, default_value = ".")]
     paths: Vec<PathBuf>,
 }
 

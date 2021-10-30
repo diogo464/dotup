@@ -6,8 +6,7 @@ use super::prelude::*;
 ///
 /// Installing a link will create the necessary directories.
 /// If a file or directory already exists at the location a link would be installed this command will fail.
-#[derive(Clap)]
-#[clap(setting = AppSettings::ColoredHelp)]
+#[derive(Parser)]
 pub struct Opts {
     /// The location where links will be installed to.
     /// Defaults to the home directory.
@@ -15,7 +14,7 @@ pub struct Opts {
     install_base: Option<PathBuf>,
 
     /// The files/directories to install.
-    #[clap(required = true, min_values = 1, default_value = ".")]
+    #[clap(min_values = 1, default_value = ".")]
     paths: Vec<PathBuf>,
 }
 
