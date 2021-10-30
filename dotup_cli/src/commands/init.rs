@@ -4,8 +4,7 @@ use super::prelude::*;
 ///
 /// By default this will create the file in the current directory
 /// but the --depot flag can be used to change this path.
-#[derive(Clap)]
-#[clap(setting = AppSettings::ColoredHelp)]
+#[derive(Parser)]
 pub struct Opts {}
 
 pub fn main(config: Config, opts: Opts) -> anyhow::Result<()> {

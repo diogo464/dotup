@@ -8,11 +8,11 @@ pub use config::Config;
 
 pub mod prelude {
     pub use super::{utils, Config};
-    pub use clap::{AppSettings, Clap};
+    pub use clap::{AppSettings, Parser};
     pub use dotup::{Archive, Depot, DepotConfig, Link, LinkCreateParams, LinkID};
 }
 
-use clap::{AppSettings, Clap};
+use clap::{AppSettings, Parser};
 use flexi_logger::Logger;
 use std::{
     collections::HashMap,
@@ -22,8 +22,7 @@ use std::{
 
 use prelude::*;
 
-#[derive(Clap)]
-#[clap(setting = AppSettings::ColoredHelp)]
+#[derive(Parser)]
 struct Opts {
     /// Path to the depot file.
     ///
@@ -50,7 +49,7 @@ struct Opts {
     subcmd: SubCommand,
 }
 
-#[derive(Clap)]
+#[derive(Parser)]
 enum SubCommand {
     Init(commands::init::Opts),
     Link(commands::link::Opts),

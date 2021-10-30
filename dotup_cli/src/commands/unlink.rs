@@ -10,8 +10,7 @@ use super::prelude::*;
 /// This will recursively remove links. If a path is a directory then it will remove all links
 /// recursively.
 /// The links are not uninstall by default, see the --uninstall parameter.
-#[derive(Clap)]
-#[clap(setting = AppSettings::ColoredHelp)]
+#[derive(Parser)]
 pub struct Opts {
     /// Specify the install base if the links are also to be uninstalled.
     #[clap(long)]
