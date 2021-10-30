@@ -22,6 +22,8 @@ pub struct Opts {
     paths: Vec<PathBuf>,
 }
 
+// TODO: require destination
+// remove else branch
 pub fn main(config: Config, opts: Opts) -> anyhow::Result<()> {
     let mut depot = utils::read_depot(&config.archive_path)?;
 
@@ -43,7 +45,7 @@ pub fn main(config: Config, opts: Opts) -> anyhow::Result<()> {
         } else {
             let mut params = Vec::new();
             for origin in origins {
-                link(&depot, origin, destination, origin, &mut params)?;
+                generate_link_params(&depot, origin, destination, origin, &mut params)?;
             }
             params
         };
@@ -69,7 +71,7 @@ pub fn main(config: Config, opts: Opts) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn link(
+fn generate_link_params(
     depot: &Depot,
     origin: &Path,
     destination: &Path,
@@ -78,14 +80,14 @@ fn link(
 ) -> anyhow::Result<()> {
     let metadata = std::fs::metadata(origin)?;
     if metadata.is_file() {
-        link_file(depot, origin, destination, base, params)?;
+        generate_file_link_params(depot, origin, destination, base, params)?;
     } else if metadata.is_dir() {
-        link_directory_recursive(depot, origin, destination, base, params)?;
+        generate_directory_link_params_recursive(depot, origin, destination, base, params)?;
     }
     Ok(())
 }
 
-fn link_file(
+fn generate_file_link_params(
     depot: &Depot,
     origin: &Path,
     destination: &Path,
@@ -118,7 +120,7 @@ fn link_file(
     Ok(())
 }
 
-fn link_directory_recursive(
+fn generate_directory_link_params_recursive(
     depot: &Depot,
     dir_path: &Path,
     destination: &Path,
@@ -127,7 +129,7 @@ fn link_directory_recursive(
 ) -> anyhow::Result<()> {
     for origin in dir_path.read_dir()? {
         let origin = origin?.path();
-        link(depot, &origin, destination, base, params)?;
+        generate_link_params(depot, &origin, destination, base, params)?;
     }
     Ok(())
 }

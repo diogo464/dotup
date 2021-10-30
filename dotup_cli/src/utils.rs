@@ -83,8 +83,8 @@ pub fn read_depot(archive_path: impl AsRef<Path>) -> anyhow::Result<Depot> {
     let archive_path = archive_path.as_ref().to_path_buf();
     let archive = read_archive(&archive_path)?;
     let depot_config = DepotConfig {
-        archive_path,
         archive: Default::default(),
+        archive_path,
     };
     let mut depot = Depot::new(depot_config)?;
 

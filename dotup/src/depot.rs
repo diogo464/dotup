@@ -159,6 +159,7 @@ struct DepotShared {
 
 #[derive(Debug)]
 pub struct Depot {
+    // TODO: remove shared
     shared: Arc<DepotShared>,
     // Maps the origin to the link
     links: SlotMap<LinkID, Link>,
@@ -166,12 +167,15 @@ pub struct Depot {
 }
 
 impl Depot {
+    /// Creates a new [`Depot`] using the config.
+    /// Fails if any of the links in the provided archive fail to be created.
     pub fn new(config: DepotConfig) -> Result<Self> {
         depot_create(config)
     }
 
     /// Creates a new link from the description.
     /// The origin path must exist.
+    /// If a link with the same origin already existed then it is replaced.
     pub fn create_link(&mut self, link_desc: LinkCreateParams) -> Result<LinkID, LinkCreateError> {
         let link = depot_create_link(self, link_desc)?;
         let link_id = depot_insert_link(self, link);
@@ -267,6 +271,7 @@ fn depot_create_link(depot: &Depot, link_desc: LinkCreateParams) -> Result<Link,
     link_ensure_relative_path(&link_desc.destination)?;
     debug_assert!(utils::is_canonical(depot.base_path())?);
 
+    // Check if the file/directory at origin actually exists
     let origin_joined = depot.base_path().join(&link_desc.origin);
     let origin_result = origin_joined.canonicalize();
     let origin_canonical = match origin_result {
@@ -291,7 +296,6 @@ fn depot_create_link(depot: &Depot, link_desc: LinkCreateParams) -> Result<Link,
         .strip_prefix(depot.base_path())
         .unwrap()
         .to_path_buf();
-    // let origin = origin_canonical;
     let destination = link_desc.destination;
 
     let ty = if origin.is_dir() {
