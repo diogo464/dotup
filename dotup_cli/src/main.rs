@@ -63,8 +63,9 @@ fn main() -> anyhow::Result<()> {
 
     if !opts.quiet {
         let log_level = match opts.verbose {
-            0 => "info",
-            1 => "debug",
+            0 => "warn",
+            1 => "info",
+            2 => "debug",
             _ => "trace",
         };
 
