@@ -3,7 +3,6 @@ use std::{
     collections::HashMap,
     fs::Metadata,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 use thiserror::Error;
 
@@ -150,17 +149,11 @@ impl std::fmt::Display for Link {
 }
 
 #[derive(Debug)]
-struct DepotShared {
-    /// Must be canonical path
-    base_path: PathBuf,
-    /// Must be canonical path
-    archive_path: PathBuf,
-}
-
-#[derive(Debug)]
 pub struct Depot {
-    // TODO: remove shared
-    shared: Arc<DepotShared>,
+    // Must be canonical path
+    base_path: PathBuf,
+    // Must be canonical path
+    archive_path: PathBuf,
     // Maps the origin to the link
     links: SlotMap<LinkID, Link>,
     links_by_origin: HashMap<PathBuf, LinkID>,
@@ -212,11 +205,11 @@ impl Depot {
     }
 
     pub fn base_path(&self) -> &Path {
-        &self.shared.base_path
+        &self.base_path
     }
 
     pub fn archive_path(&self) -> &Path {
-        &self.shared.archive_path
+        &self.archive_path
     }
 }
 
@@ -233,13 +226,9 @@ fn depot_create(config: DepotConfig) -> Result<Depot> {
         .expect("Failed to get parent of archive path")
         .to_path_buf();
 
-    let depot_shared = DepotShared {
+    let mut depot = Depot {
         base_path,
         archive_path,
-    };
-
-    let mut depot = Depot {
-        shared: Arc::new(depot_shared),
         links: Default::default(),
         links_by_origin: Default::default(),
     };
