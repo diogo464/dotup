@@ -132,7 +132,7 @@ impl Link {
     }
 
     /// Where this link would be installed with the given `install_base`.
-    pub fn install_destination(&self, install_base: &Path) -> std::io::Result<PathBuf> {
+    pub fn install_destination(&self, install_base: &Path) -> PathBuf {
         utils::weakly_canonical(install_base.join(self.destination()))
     }
 }
@@ -258,7 +258,7 @@ fn depot_archive(depot: &Depot) -> Archive {
 fn depot_create_link(depot: &Depot, link_desc: LinkCreateParams) -> Result<Link, LinkCreateError> {
     // link_ensure_relative_path(&link_desc.origin)?;
     link_ensure_relative_path(&link_desc.destination)?;
-    debug_assert!(utils::is_canonical(depot.base_path())?);
+    debug_assert!(utils::is_canonical(depot.base_path()));
 
     // Check if the file/directory at origin actually exists
     let origin_joined = depot.base_path().join(&link_desc.origin);
@@ -327,7 +327,7 @@ fn depot_install_link(
     install_base: &Path,
 ) -> Result<(), LinkInstallError> {
     let final_origin = link.origin_canonical();
-    let final_destination = link.install_destination(install_base)?;
+    let final_destination = link.install_destination(install_base);
 
     log::debug!("Final origin : {}", final_origin.display());
     log::debug!("Final destination : {}", final_destination.display());
@@ -374,7 +374,7 @@ fn depot_install_link(
 
 fn depot_uninstall_link(_depot: &Depot, link: &Link, install_base: &Path) -> Result<()> {
     let origin_canonical = link.origin_canonical();
-    let install_destination = link.install_destination(install_base)?;
+    let install_destination = link.install_destination(install_base);
     let link_target = match std::fs::read_link(&install_destination) {
         Ok(target) => target,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),

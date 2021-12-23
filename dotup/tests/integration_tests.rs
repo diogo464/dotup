@@ -114,13 +114,13 @@ fn test_depot_install_uninstall_link() {
     }
 
     for link in depot.links() {
-        let link_path = link.install_destination(install_base).unwrap();
+        let link_path = link.install_destination(install_base);
         let link_target = std::fs::read_link(&link_path).unwrap();
         assert_eq!(link_target.canonicalize().unwrap(), link.origin_canonical());
     }
 
     for link in depot.links() {
         depot.uninstall_link(link, install_base).unwrap();
-        assert!(!link.install_destination(install_base).unwrap().exists());
+        assert!(!link.install_destination(install_base).exists());
     }
 }

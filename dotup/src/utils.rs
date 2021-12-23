@@ -22,13 +22,13 @@ pub fn is_directory(path: impl AsRef<Path>) -> std::io::Result<bool> {
     Ok(metadata.is_dir())
 }
 
-pub fn is_canonical(path: &Path) -> std::io::Result<bool> {
-    Ok(path == path.canonicalize()?.as_path())
+pub fn is_canonical(path: &Path) -> bool {
+    path == weakly_canonical(path).as_path()
 }
 
-pub fn weakly_canonical(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
-    let cwd = std::env::current_dir()?;
-    Ok(weakly_canonical_cwd(path, cwd))
+pub fn weakly_canonical(path: impl AsRef<Path>) -> PathBuf {
+    let cwd = std::env::current_dir().expect("Failed to obtain current directory");
+    weakly_canonical_cwd(path, cwd)
 }
 
 fn weakly_canonical_cwd(path: impl AsRef<Path>, cwd: PathBuf) -> PathBuf {
