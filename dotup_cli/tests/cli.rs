@@ -89,7 +89,7 @@ fn test_cli_install_uninstall_unlink() {
     let install_base = format!("{}", install_dir.path().display());
     run_command(
         &dir,
-        &format!("install --install-base {} o1 o2", install_base),
+        &format!("--install-path {} install o1 o2", install_base),
     )
     .success();
 
@@ -108,7 +108,7 @@ fn test_cli_install_uninstall_unlink() {
 
     run_command(
         &dir,
-        &format!("uninstall --install-base {} o1/file.txt", install_base),
+        &format!("--install-path {} uninstall o1/file.txt", install_base),
     )
     .success();
     assert!(!install_dir.path().join(".config/file.txt").exists());
@@ -117,7 +117,7 @@ fn test_cli_install_uninstall_unlink() {
 
     run_command(
         &dir,
-        &format!("uninstall --install-base {} o1", install_base),
+        &format!("--install-path {} uninstall o1", install_base),
     )
     .success();
     assert!(!install_dir.path().join(".config/file.txt").exists());

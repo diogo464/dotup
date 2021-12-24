@@ -45,6 +45,11 @@ struct Opts {
     #[clap(short, long, parse(from_occurrences))]
     verbose: i32,
 
+    /// The location where links will be installed to.
+    /// Defaults to the home directory.
+    #[clap(short, long)]
+    install_path: Option<PathBuf>,
+
     #[clap(subcommand)]
     subcmd: SubCommand,
 }
@@ -80,9 +85,16 @@ fn main() -> anyhow::Result<()> {
         Some(path) => path,
         None => utils::find_archive_path()?,
     };
+    let install_path = match opts.install_path {
+        Some(path) => path,
+        None => utils::home_directory()?,
+    };
     log::debug!("Archive path : {}", archive_path.display());
 
-    let config = Config { archive_path };
+    let config = Config {
+        archive_path,
+        install_path,
+    };
 
     match opts.subcmd {
         SubCommand::Init(opts) => commands::init::main(config, opts),

@@ -25,7 +25,7 @@ pub struct Opts {
 #[derive(Debug)]
 struct State {
     max_depth: u32,
-    install_base: PathBuf,
+    install_path: PathBuf,
 }
 
 pub fn main(config: Config, opts: Opts) -> anyhow::Result<()> {
@@ -67,9 +67,7 @@ pub fn main(config: Config, opts: Opts) -> anyhow::Result<()> {
 
     let state = State {
         max_depth: u32::MAX,
-        install_base: opts
-            .install_base
-            .unwrap_or(utils::home_directory().unwrap()),
+        install_path: config.install_path,
     };
 
     let (directories, files) = utils::collect_read_dir_split(".")?;
@@ -142,7 +140,7 @@ fn print_link(depot: &Depot, state: &State, link: &Link, depth: u32) {
     };
 
     print_identation(depth);
-    if depot.is_link_installed(link, &state.install_base) {
+    if depot.is_link_installed(link, &state.install_path) {
         println!(
             "{} -> {}",
             Colour::Green.paint(&format!("{}", filename.to_string_lossy())),
