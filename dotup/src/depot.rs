@@ -179,8 +179,41 @@ impl Depot {
         depot_get_link(self, link_id)
     }
 
+    pub fn get_link_by_path(&self, path: &Path) -> Option<&Link> {
+        self.get_link_id_by_path(path)
+            .map(|id| self.get_link(id).unwrap())
+    }
+
+    pub fn get_link_id_by_path(&self, path: &Path) -> Option<LinkID> {
+        let weak = utils::weakly_canonical(path);
+        for link in self.links() {
+            if link.origin_canonical() == weak {
+                return Some(link.id());
+            }
+        }
+        None
+    }
+
+    /// checks if there are any linked files/directories under the path `path`
+    /// if `path` is a path to a file and that file is linked then this function returns true
+    pub fn subpath_has_links(&self, path: &Path) -> bool {
+        let canonical = utils::weakly_canonical(path);
+        for link in self.links() {
+            if link.origin_canonical().starts_with(&canonical) {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn remove_link(&mut self, link_id: LinkID) {
         depot_remove_link(self, link_id)
+    }
+
+    pub fn remove_link_by_path(&mut self, path: &Path) {
+        if let Some(id) = self.get_link_id_by_path(path) {
+            self.remove_link(id);
+        }
     }
 
     /// Archives this depot so it can be serialized
@@ -198,6 +231,10 @@ impl Depot {
         install_base: impl AsRef<Path>,
     ) -> Result<(), LinkInstallError> {
         depot_install_link(self, link, install_base.as_ref())
+    }
+
+    pub fn is_link_installed(&self, link: &Link, install_base: impl AsRef<Path>) -> bool {
+        depot_is_link_installed(link, install_base.as_ref())
     }
 
     pub fn uninstall_link(&self, link: &Link, install_base: impl AsRef<Path>) -> Result<()> {
@@ -370,6 +407,15 @@ fn depot_install_link(
     std::os::unix::fs::symlink(&final_origin, &final_destination)?;
 
     Ok(())
+}
+
+fn depot_is_link_installed(link: &Link, install_base: &Path) -> bool {
+    let origin_canonical = link.origin_canonical();
+    let install_destination = link.install_destination(install_base);
+    match std::fs::read_link(&install_destination) {
+        Ok(target) if target == origin_canonical => true,
+        _ => false,
+    }
 }
 
 fn depot_uninstall_link(_depot: &Depot, link: &Link, install_base: &Path) -> Result<()> {
