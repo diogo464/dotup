@@ -53,6 +53,7 @@ struct Opts {
 enum SubCommand {
     Init(commands::init::Opts),
     Link(commands::link::Opts),
+    Status(commands::status::Opts),
     Unlink(commands::unlink::Opts),
     Install(commands::install::Opts),
     Uninstall(commands::uninstall::Opts),
@@ -86,6 +87,7 @@ fn main() -> anyhow::Result<()> {
     match opts.subcmd {
         SubCommand::Init(opts) => commands::init::main(config, opts),
         SubCommand::Link(opts) => commands::link::main(config, opts),
+        SubCommand::Status(opts) => commands::status::main(config, opts),
         SubCommand::Unlink(opts) => commands::unlink::main(config, opts),
         SubCommand::Install(opts) => commands::install::main(config, opts),
         SubCommand::Uninstall(opts) => commands::uninstall::main(config, opts),

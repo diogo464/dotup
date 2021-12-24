@@ -11,6 +11,7 @@ doc = false
 [dependencies]
 anyhow = "1.0"
 log = "0.4"
+ansi_term = "0.12.1"
 
 [dependencies.clap]
 features = ["derive"]

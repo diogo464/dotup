@@ -149,3 +149,14 @@ pub fn collect_files_in_dir(dir: impl Into<PathBuf>) -> anyhow::Result<Vec<PathB
 
     Ok(paths)
 }
+
+/// Collects the result of std::fs::read_dir into two vecs
+/// The first one contains all the directories and the second one all the files
+pub fn collect_read_dir_split(
+    dir: impl AsRef<Path>,
+) -> anyhow::Result<(Vec<PathBuf>, Vec<PathBuf>)> {
+    Ok(std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .partition(|p| p.is_dir()))
+}
