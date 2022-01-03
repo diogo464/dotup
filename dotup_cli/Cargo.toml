@@ -15,7 +15,7 @@ ansi_term = "0.12.1"
 
 [dependencies.clap]
 features = ["derive"]
-version = "3.0.0-rc.7"
+version = "3.0.1"
 
 [dependencies.dotup]
 path = "../dotup"
