@@ -25,5 +25,5 @@ features = ["colors"]
 version = "0.22"
 
 [dev-dependencies]
-tempfile = "3.2"
+tempfile = "3.3"
 assert_cmd = "2.0"
