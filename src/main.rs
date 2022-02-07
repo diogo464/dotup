@@ -1,4 +1,7 @@
 #![feature(try_blocks)]
+
+// TODO: rewrite all errors so they start with lower case
+
 pub mod depot {
     use std::{
         collections::HashSet,
@@ -7,7 +10,7 @@ pub mod depot {
         path::{Path, PathBuf},
     };
 
-    use slotmap::SlotMap;
+    use slotmap::{Key, SlotMap};
 
     pub use disk::{read, write};
 
@@ -134,6 +137,10 @@ pub mod depot {
             }
         }
 
+        /// moves the link specified by `link_id` to the path at `destination`.
+        /// if the link is already at the destination nothing is done.
+        /// if the destination is another link that that link is removed.
+        /// if the destination is under another link then an error is returned.
         pub fn move_link(
             &mut self,
             link_id: LinkID,
@@ -158,10 +165,12 @@ pub mod depot {
                         let node_parent_id = node.parent;
                         let node_link_id = *node_link_id;
                         assert_ne!(link_id, node_link_id);
-                        self.remove(node_link_id);
                         self.node_child_remove(link_parent_node_id, link_node_id);
                         self.node_child_add(node_parent_id, link_node_id);
                         self.node_set_parent(link_node_id, node_parent_id);
+                        self.remove(node_link_id);
+                        let new_origin = self.node_build_path(link_node_id);
+                        self.links[link_id].origin = new_origin;
                         Ok(())
                     }
                     NodeKind::Directory(..) => Err(anyhow::anyhow!(
@@ -176,8 +185,10 @@ pub mod depot {
                     )),
                     NodeKind::Directory(_) => {
                         let new_node_id = self.node_create_link(destination, link_id);
+                        let new_origin = self.node_build_path(new_node_id);
                         self.node_remove(link_node_id);
                         self.links[link_id].node_id = new_node_id;
+                        self.links[link_id].origin = new_origin;
                         Ok(())
                     }
                 }
@@ -205,6 +216,14 @@ pub mod depot {
             let origin = origin.as_ref();
             verify_path(origin)?;
             Ok(self.search_unchecked(&origin))
+        }
+
+        /// finds the link at origin.
+        pub fn find(&self, origin: impl AsRef<Path>) -> anyhow::Result<Option<LinkID>> {
+            match self.search(origin)? {
+                SearchResult::Found(link_id) => Ok(Some(link_id)),
+                SearchResult::Ancestor(_) | SearchResult::NotFound => Ok(None),
+            }
         }
 
         /// returns an iterator for all the links at or under the given path.
@@ -391,6 +410,22 @@ pub mod depot {
             }
         }
 
+        /// build the path that references this node.
+        fn node_build_path(&self, node_id: NodeID) -> PathBuf {
+            fn recursive_helper(nodes: &SlotMap<NodeID, Node>, nid: NodeID, pbuf: &mut PathBuf) {
+                if nid.is_null() {
+                    return;
+                }
+                let parent_id = nodes[nid].parent;
+                recursive_helper(nodes, parent_id, pbuf);
+                pbuf.push(&nodes[nid].comp);
+            }
+
+            let mut node_path = PathBuf::default();
+            recursive_helper(&self.nodes, node_id, &mut node_path);
+            node_path
+        }
+
         fn node_set_parent(&mut self, node_id: NodeID, parent: NodeID) {
             self.nodes[node_id].parent = parent;
         }
@@ -461,6 +496,10 @@ pub mod depot {
         }
     }
 
+    /// a verified path is a path that:
+    /// + is not empty
+    /// + is relative
+    /// + does not contain Prefix/RootDir/ParentDir
     fn verify_path(path: &Path) -> anyhow::Result<()> {
         // make sure the path is not empty
         // make sure the path is relative
@@ -523,11 +562,14 @@ pub mod depot {
             let f1 = depot.create("d1/f1", "d1/f1").unwrap();
             let _f2 = depot.create("d1/f2", "d1/f2").unwrap();
 
+            depot.move_link(f1, "").unwrap_err();
             depot.move_link(f1, "d1/f2/f1").unwrap_err();
-            depot.move_link(f1, "d1").unwrap_err();
 
-            depot.move_link(f1, "").unwrap();
-            depot.move_link(f1, "d2/f1").unwrap();
+            depot.move_link(f1, "d1/f2").unwrap();
+            depot.move_link(f1, "f1").unwrap();
+            assert_eq!(depot.link_view(f1).origin(), Path::new("f1"));
+            depot.move_link(f1, "f2").unwrap();
+            assert_eq!(depot.link_view(f1).origin(), Path::new("f2"));
         }
 
         #[test]
@@ -576,9 +618,13 @@ mod dotup {
         path::{Path, PathBuf},
     };
 
+    use ansi_term::Color;
     use anyhow::Context;
 
-    use crate::depot::{self, Depot, LinkID};
+    use crate::{
+        depot::{self, Depot, LinkID},
+        utils,
+    };
 
     #[derive(Debug)]
     struct CanonicalPair {
@@ -658,7 +704,7 @@ mod dotup {
                         if already_linked.contains(&pair.link_id) {
                             continue;
                         }
-                        self.install_symlink(&pair.origin, &pair.destination)?;
+                        self.symlink_install(&pair.origin, &pair.destination)?;
                         already_linked.insert(pair.link_id);
                     }
                 };
@@ -674,7 +720,7 @@ mod dotup {
                     let origin = self.prepare_origin_path(origin.as_ref())?;
                     let canonical_pairs = self.canonical_pairs_under(&origin)?;
                     for pair in canonical_pairs {
-                        self.uninstall_symlink(&pair.origin, &pair.destination)?;
+                        self.symlink_uninstall(&pair.origin, &pair.destination)?;
                     }
                 };
                 if let Err(e) = uninstall_result {
@@ -686,50 +732,182 @@ mod dotup {
             }
         }
 
-        pub fn mv(&mut self, from: impl Iterator<Item = impl AsRef<Path>>, to: impl AsRef<Path>) {
-            let to = to.as_ref();
-            let from: Vec<_> = from.map(|p| p.as_ref().to_owned()).collect();
-            match from.as_slice() {
-                [] => unreachable!(),
-                [from] => self.mv_one(from, to),
-                [from @ ..] => self.mv_many(from, to),
+        pub fn mv(
+            &mut self,
+            origins: impl Iterator<Item = impl AsRef<Path>>,
+            destination: impl AsRef<Path>,
+        ) {
+            let origins = {
+                let mut v = Vec::new();
+                for origin in origins {
+                    match self.prepare_origin_path(origin.as_ref()) {
+                        Ok(origin) => v.push(origin),
+                        Err(e) => {
+                            println!("invalid link {} : {e}", origin.as_ref().display());
+                            return;
+                        }
+                    }
+                }
+                v
+            };
+            let destination = destination.as_ref();
+
+            // if we are moving multiple links then the destination must be a directory
+            if origins.len() > 1 && destination.is_dir() {
+                println!("destination must be a directory");
+                return;
+            }
+
+            for origin in origins {
+                if let Err(e) = self.mv_one(&origin, destination) {
+                    println!("error moving link {} : {e}", origin.display());
+                }
             }
         }
 
-        fn mv_one(&mut self, from: &Path, to: &Path) {}
+        fn mv_one(&mut self, origin: &Path, destination: &Path) -> anyhow::Result<()> {
+            let link_id = match self.depot.find(origin)? {
+                Some(link_id) => link_id,
+                None => {
+                    return Err(anyhow::anyhow!(format!(
+                        "{} is not a link",
+                        origin.display()
+                    )))
+                }
+            };
+            let is_installed = self.symlink_is_installed_by_link_id(link_id)?;
+            let original_origin = self.depot.link_view(link_id).origin().to_owned();
+            self.depot.move_link(link_id, destination)?;
+            // move the actual file on disk
+            if let Err(e) = std::fs::rename(origin, destination).context("Failed to move file") {
+                // unwrap: moving the link back to its origin place has to work
+                self.depot.move_link(link_id, original_origin).unwrap();
+                return Err(e);
+            }
+            // reinstall because we just moved the origin
+            if is_installed {
+                self.symlink_install_by_link_id(link_id)
+                    .context("failed to reinstall link while moving")?;
+            }
+            Ok(())
+        }
 
-        fn mv_many(&mut self, from: &[PathBuf], to: &Path) {}
+        pub fn status(&self) {
+            let status_result: anyhow::Result<()> = try {
+                let curr_dir = utils::current_working_directory();
+                let (dirs, files) = utils::collect_read_dir_split(curr_dir)?;
+            };
+            if let Err(e) = status_result {
+                println!("error while displaying status : {e}");
+            }
+        }
+
+        pub fn status2(&self) {
+            let status_result: anyhow::Result<()> = try {
+                let curr_dir = &std::env::current_dir()?;
+                let (dirs, files) = utils::collect_read_dir_split(curr_dir)?;
+                for path in dirs.iter().chain(files.iter()) {
+                    self.print_status_for(&path, 0)?;
+                }
+            };
+            if let Err(e) = status_result {
+                println!("error while displaying status : {e}");
+            }
+        }
+
+        fn print_status_for(&self, path: &Path, depth: u32) -> anyhow::Result<()> {
+            fn print_depth(d: u32) {
+                for _ in 0..d {
+                    print!("  ");
+                }
+            }
+
+            let origin = self.prepare_origin_path(path)?;
+            if path.is_dir() {
+                print_depth(depth);
+                let file_name = path.file_name().unwrap().to_str().unwrap_or_default();
+                if let Some(link_id) = self.depot.find(&origin)? {
+                    let installed = self.symlink_is_installed_by_link_id(link_id)?;
+                    let link_view = self.depot.link_view(link_id);
+                    let destination = link_view.destination().display().to_string();
+                    let color = if installed { Color::Green } else { Color::Red };
+                    println!(
+                        "{}/ ---> {}",
+                        color.paint(file_name),
+                        Color::Blue.paint(destination)
+                    );
+                } else {
+                    println!("{}/", file_name);
+                    let (dirs, files) = utils::collect_read_dir_split(path)?;
+                    for path in dirs.iter().chain(files.iter()) {
+                        self.print_status_for(&path, depth + 1)?;
+                    }
+                }
+            } else if path.is_file() || path.is_symlink() {
+                print_depth(depth);
+                let file_name = path.file_name().unwrap().to_str().unwrap_or_default();
+                if let Some(link_id) = self.depot.find(&origin)? {
+                    let installed = self.symlink_is_installed_by_link_id(link_id)?;
+                    let link_view = self.depot.link_view(link_id);
+                    let destination = link_view.destination().display().to_string();
+                    let color = if installed { Color::Green } else { Color::Red };
+
+                    println!(
+                        "{} ---> {}",
+                        color.paint(file_name),
+                        Color::Blue.paint(destination)
+                    );
+                } else {
+                    println!("{}", file_name);
+                }
+            }
+            Ok(())
+        }
 
         fn prepare_origin_path(&self, origin: &Path) -> anyhow::Result<PathBuf> {
-            let canonical = origin
-                .canonicalize()
-                .context("Failed to canonicalize origin path")?;
+            let canonical = utils::weakly_canonical(origin);
             let relative = canonical
                 .strip_prefix(&self.depot_dir)
                 .context("Invalid origin path, not under depot directory")?;
             Ok(relative.to_owned())
         }
 
-        // returns the canonical pairs (origin, destination) for all links under `path`.
+        // returns the canonical pairs for all links under `path`.
         fn canonical_pairs_under(&self, path: &Path) -> anyhow::Result<Vec<CanonicalPair>> {
             let origin = self.prepare_origin_path(path)?;
-            let mut paths = Vec::new();
+            let mut canonical_pairs = Vec::new();
             for link_id in self.depot.links_under(origin)? {
-                let link_view = self.depot.link_view(link_id);
-                let relative_origin = link_view.origin();
-                let relative_destination = link_view.destination();
-                let canonical_origin = self.depot_dir.join(relative_origin);
-                let canonical_destination = self.install_base.join(relative_destination);
-                paths.push(CanonicalPair {
-                    link_id,
-                    origin: canonical_origin,
-                    destination: canonical_destination,
-                });
+                canonical_pairs.push(self.canonical_pair_from_link_id(link_id));
             }
-            Ok(paths)
+            Ok(canonical_pairs)
         }
 
-        fn install_symlink(&self, origin: &Path, destination: &Path) -> anyhow::Result<()> {
+        fn symlink_is_installed_by_link_id(&self, link_id: LinkID) -> anyhow::Result<bool> {
+            let canonical_pair = self.canonical_pair_from_link_id(link_id);
+            self.symlink_is_installed(&canonical_pair.origin, &canonical_pair.destination)
+        }
+
+        fn symlink_is_installed(&self, origin: &Path, destination: &Path) -> anyhow::Result<bool> {
+            debug_assert!(origin.is_absolute());
+            debug_assert!(destination.is_absolute());
+
+            if destination.is_symlink() {
+                let symlink_destination = destination.read_link()?;
+                match symlink_destination.canonicalize() {
+                    Ok(canonicalized) => Ok(origin == canonicalized),
+                    Err(_) => Ok(false),
+                }
+            } else {
+                Ok(false)
+            }
+        }
+
+        fn symlink_install_by_link_id(&self, link_id: LinkID) -> anyhow::Result<()> {
+            let canonical_pair = self.canonical_pair_from_link_id(link_id);
+            self.symlink_install(&canonical_pair.origin, &canonical_pair.destination)
+        }
+
+        fn symlink_install(&self, origin: &Path, destination: &Path) -> anyhow::Result<()> {
             debug_assert!(origin.is_absolute());
             debug_assert!(destination.is_absolute());
 
@@ -753,7 +931,7 @@ mod dotup {
             Ok(())
         }
 
-        fn uninstall_symlink(&self, origin: &Path, destination: &Path) -> anyhow::Result<()> {
+        fn symlink_uninstall(&self, origin: &Path, destination: &Path) -> anyhow::Result<()> {
             debug_assert!(origin.is_absolute());
             debug_assert!(destination.is_absolute());
 
@@ -765,6 +943,19 @@ mod dotup {
             }
 
             Ok(())
+        }
+
+        fn canonical_pair_from_link_id(&self, link_id: LinkID) -> CanonicalPair {
+            let link_view = self.depot.link_view(link_id);
+            let relative_origin = link_view.origin();
+            let relative_destination = link_view.destination();
+            let canonical_origin = self.depot_dir.join(relative_origin);
+            let canonical_destination = self.install_base.join(relative_destination);
+            CanonicalPair {
+                link_id,
+                origin: canonical_origin,
+                destination: canonical_destination,
+            }
         }
     }
 
@@ -789,15 +980,25 @@ mod dotup {
 }
 
 mod utils {
-    use std::path::PathBuf;
+    use std::path::{Component, Path, PathBuf};
 
     use crate::{
-        depot::{self, Depot},
         dotup::{self, Dotup},
         Flags,
     };
 
     pub const DEFAULT_DEPOT_FILE_NAME: &str = ".depot";
+
+    /// collects the result of std::fs::read_dir into two vecs, the first one contains all the
+    /// directories and the second one all the files.
+    pub fn collect_read_dir_split(
+        dir: impl AsRef<Path>,
+    ) -> anyhow::Result<(Vec<PathBuf>, Vec<PathBuf>)> {
+        Ok(std::fs::read_dir(dir)?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .partition(|p| p.is_dir()))
+    }
 
     pub fn read_dotup(flags: &Flags) -> anyhow::Result<Dotup> {
         let depot_path = depot_path_from_flags(flags)?;
@@ -807,18 +1008,6 @@ mod utils {
 
     pub fn write_dotup(dotup: &Dotup) -> anyhow::Result<()> {
         dotup::write(dotup)
-    }
-
-    pub fn read_depot(flags: &Flags) -> anyhow::Result<Depot> {
-        let depot_path = depot_path_from_flags(flags)?;
-        let depot = depot::read(&depot_path)?;
-        Ok(depot)
-    }
-
-    pub fn write_depot(flags: &Flags, depot: &Depot) -> anyhow::Result<()> {
-        let depot_path = depot_path_from_flags(flags)?;
-        depot::write(&depot_path, depot)?;
-        Ok(())
     }
 
     pub fn depot_path_from_flags(flags: &Flags) -> anyhow::Result<PathBuf> {
@@ -855,9 +1044,75 @@ mod utils {
     pub fn default_install_base() -> PathBuf {
         PathBuf::from(std::env::var("HOME").expect("Failed to obtain HOME environment variable"))
     }
+    pub fn weakly_canonical(path: impl AsRef<Path>) -> PathBuf {
+        let cwd = current_working_directory();
+        weakly_canonical_cwd(path, cwd)
+    }
 
-    fn current_working_directory() -> PathBuf {
+    fn weakly_canonical_cwd(path: impl AsRef<Path>, cwd: PathBuf) -> PathBuf {
+        // Adapated from
+        // https://github.com/rust-lang/cargo/blob/fede83ccf973457de319ba6fa0e36ead454d2e20/src/cargo/util/paths.rs#L61
+        let path = path.as_ref();
+
+        let mut components = path.components().peekable();
+        let mut canonical = cwd;
+        let prefix = if let Some(c @ Component::Prefix(..)) = components.peek().cloned() {
+            components.next();
+            PathBuf::from(c.as_os_str())
+        } else {
+            PathBuf::new()
+        };
+
+        for component in components {
+            match component {
+                Component::Prefix(_) => unreachable!(),
+                Component::RootDir => {
+                    canonical = prefix.clone();
+                    canonical.push(component.as_os_str())
+                }
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    canonical.pop();
+                }
+                Component::Normal(p) => canonical.push(p),
+            };
+        }
+
+        canonical
+    }
+
+    pub fn current_working_directory() -> PathBuf {
         std::env::current_dir().expect("Failed to obtain current working directory")
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn weak_canonical_test() {
+            let cwd = PathBuf::from("/home/user");
+            assert_eq!(
+                PathBuf::from("/home/dest"),
+                weakly_canonical_cwd("../dest", cwd.clone())
+            );
+            assert_eq!(
+                PathBuf::from("/home/dest/configs/init.vim"),
+                weakly_canonical_cwd("../dest/configs/init.vim", cwd.clone())
+            );
+            assert_eq!(
+                PathBuf::from("/dest/configs/init.vim"),
+                weakly_canonical_cwd("/dest/configs/init.vim", cwd.clone())
+            );
+            assert_eq!(
+                PathBuf::from("/home/user/configs/nvim/lua/setup.lua"),
+                weakly_canonical_cwd("./configs/nvim/lua/setup.lua", cwd.clone())
+            );
+            assert_eq!(
+                PathBuf::from("/home/user/configs/nvim/lua/setup.lua"),
+                weakly_canonical_cwd("configs/nvim/lua/setup.lua", cwd.clone())
+            );
+        }
     }
 }
 
@@ -891,6 +1146,7 @@ enum SubCommand {
     Install(InstallArgs),
     Uninstall(UninstallArgs),
     Mv(MvArgs),
+    Status(StatusArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -902,6 +1158,7 @@ fn main() -> anyhow::Result<()> {
         SubCommand::Install(cmd_args) => command_install(args.flags, cmd_args),
         SubCommand::Uninstall(cmd_args) => command_uninstall(args.flags, cmd_args),
         SubCommand::Mv(cmd_args) => command_mv(args.flags, cmd_args),
+        SubCommand::Status(cmd_args) => command_status(args.flags, cmd_args),
     }
 }
 
@@ -962,7 +1219,6 @@ struct InstallArgs {
 fn command_install(global_flags: Flags, args: InstallArgs) -> anyhow::Result<()> {
     let dotup = utils::read_dotup(&global_flags)?;
     dotup.install(args.paths.into_iter());
-    utils::write_dotup(&dotup)?;
     Ok(())
 }
 
@@ -974,7 +1230,6 @@ struct UninstallArgs {
 fn command_uninstall(global_flags: Flags, args: UninstallArgs) -> anyhow::Result<()> {
     let dotup = utils::read_dotup(&global_flags)?;
     dotup.uninstall(args.paths.into_iter());
-    utils::write_dotup(&dotup)?;
     Ok(())
 }
 
@@ -993,5 +1248,14 @@ fn command_mv(global_flags: Flags, args: MvArgs) -> anyhow::Result<()> {
     let from = paths;
     dotup.mv(from.iter(), &to);
     utils::write_dotup(&dotup)?;
+    Ok(())
+}
+
+#[derive(Parser, Debug)]
+struct StatusArgs {}
+
+fn command_status(global_flags: Flags, _args: StatusArgs) -> anyhow::Result<()> {
+    let dotup = utils::read_dotup(&global_flags)?;
+    dotup.status();
     Ok(())
 }
