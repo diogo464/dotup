@@ -923,7 +923,7 @@ pub mod dotup {
 
         pub fn link(&mut self, origin: impl AsRef<Path>, destination: impl AsRef<Path>) {
             let link_result: anyhow::Result<()> = try {
-                let origin = self.prepare_origin_path(origin.as_ref())?;
+                let origin = self.prepare_relative_path(origin.as_ref())?;
                 let destination = destination.as_ref();
                 self.depot.link_create(origin, destination)?;
             };
@@ -936,7 +936,7 @@ pub mod dotup {
         pub fn unlink(&mut self, paths: impl Iterator<Item = impl AsRef<Path>>) {
             for origin in paths {
                 let unlink_result: anyhow::Result<()> = try {
-                    let origin = self.prepare_origin_path(origin.as_ref())?;
+                    let origin = self.prepare_relative_path(origin.as_ref())?;
                     let search_results = self.depot.link_search(&origin)?;
                     match search_results {
                         depot::SearchResult::Found(link_id) => {
@@ -959,7 +959,7 @@ pub mod dotup {
             let mut already_linked: HashSet<LinkID> = Default::default();
             for origin in paths {
                 let install_result: anyhow::Result<()> = try {
-                    let origin = self.prepare_origin_path(origin.as_ref())?;
+                    let origin = self.prepare_relative_path(origin.as_ref())?;
                     let canonical_pairs = self.canonical_pairs_under(&origin)?;
                     for pair in canonical_pairs {
                         if already_linked.contains(&pair.link_id) {
@@ -978,7 +978,7 @@ pub mod dotup {
         pub fn uninstall(&self, paths: impl Iterator<Item = impl AsRef<Path>>) {
             for origin in paths {
                 let uninstall_result: anyhow::Result<()> = try {
-                    let origin = self.prepare_origin_path(origin.as_ref())?;
+                    let origin = self.prepare_relative_path(origin.as_ref())?;
                     let canonical_pairs = self.canonical_pairs_under(&origin)?;
                     for pair in canonical_pairs {
                         self.symlink_uninstall(&pair.origin, &pair.destination)?;
@@ -1001,7 +1001,7 @@ pub mod dotup {
             let origins = {
                 let mut v = Vec::new();
                 for origin in origins {
-                    match self.prepare_origin_path(origin.as_ref()) {
+                    match self.prepare_relative_path(origin.as_ref()) {
                         Ok(origin) => v.push(origin),
                         Err(e) => {
                             println!("invalid link {} : {e}", origin.as_ref().display());
@@ -1066,7 +1066,7 @@ pub mod dotup {
         fn status_path_to_item(&self, canonical_path: &Path) -> anyhow::Result<StatusItem> {
             debug_assert!(canonical_path.is_absolute());
             debug_assert!(canonical_path.exists());
-            let relative_path = self.prepare_origin_path(&canonical_path)?;
+            let relative_path = self.prepare_relative_path(&canonical_path)?;
 
             let item = if canonical_path.is_dir() {
                 if let Some(link_id) = self.depot.link_find(&relative_path)? {
@@ -1204,7 +1204,7 @@ pub mod dotup {
                 .unwrap_or_default()
         }
 
-        fn prepare_origin_path(&self, origin: &Path) -> anyhow::Result<PathBuf> {
+        fn prepare_relative_path(&self, origin: &Path) -> anyhow::Result<PathBuf> {
             let canonical = utils::weakly_canonical(origin);
             let relative = canonical
                 .strip_prefix(&self.depot_dir)
@@ -1214,7 +1214,7 @@ pub mod dotup {
 
         // returns the canonical pairs for all links under `path`.
         fn canonical_pairs_under(&self, path: &Path) -> anyhow::Result<Vec<CanonicalPair>> {
-            let origin = self.prepare_origin_path(path)?;
+            let origin = self.prepare_relative_path(path)?;
             let mut canonical_pairs = Vec::new();
             for link_id in self.depot.links_under(origin)? {
                 canonical_pairs.push(self.canonical_pair_from_link_id(link_id));
@@ -1250,11 +1250,19 @@ pub mod dotup {
         fn symlink_install(&self, origin: &Path, destination: &Path) -> anyhow::Result<()> {
             debug_assert!(origin.is_absolute());
             debug_assert!(destination.is_absolute());
+            log::debug!(
+                "symlink_install : {} -> {}",
+                origin.display(),
+                destination.display()
+            );
 
-            if let Some(destination_parent) = destination.parent() {
-                std::fs::create_dir_all(destination_parent)
-                    .context("Failed to create directories")?;
-            }
+            let destination_parent = destination
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("destination has no parent component"))?;
+            std::fs::create_dir_all(destination_parent).context("Failed to create directories")?;
+            // need to do this beacause if the destination path ends in '/' because the symlink
+            // functions will treat it as a directory but we want a file with that name.
+            let destination = destination.with_file_name(destination.file_name().unwrap());
 
             let destination_exists = destination.exists();
             let destination_is_symlink = destination.is_symlink();
@@ -1264,9 +1272,16 @@ pub mod dotup {
             }
 
             if destination_is_symlink {
+                log::debug!("symlink already exists, removing before recreating");
                 std::fs::remove_file(&destination)?;
             }
-            std::os::unix::fs::symlink(origin, destination).context("Failed to create symlink")?;
+
+            log::debug!(
+                "creating filesystem symlink {} -> {}",
+                origin.display(),
+                destination.display()
+            );
+            std::os::unix::fs::symlink(origin, destination).context("failed to create symlink")?;
 
             Ok(())
         }
@@ -1274,6 +1289,7 @@ pub mod dotup {
         fn symlink_uninstall(&self, origin: &Path, destination: &Path) -> anyhow::Result<()> {
             debug_assert!(origin.is_absolute());
             debug_assert!(destination.is_absolute());
+            let destination = destination.with_file_name(destination.file_name().unwrap());
 
             if destination.is_symlink() {
                 let symlink_destination = destination.read_link()?.canonicalize()?;
@@ -1328,16 +1344,6 @@ mod utils {
     };
 
     pub const DEFAULT_DEPOT_FILE_NAME: &str = ".depot";
-
-    /// collects the result of std::fs::read_dir into two vecs, the first one contains all the
-    /// directories and the second one all the files.
-    pub fn collect_read_dir_split(
-        dir: impl AsRef<Path>,
-    ) -> anyhow::Result<(Vec<PathBuf>, Vec<PathBuf>)> {
-        Ok(collect_paths_in_dir(dir)?
-            .into_iter()
-            .partition(|p| p.is_dir()))
-    }
 
     pub fn collect_paths_in_dir(dir: impl AsRef<Path>) -> anyhow::Result<Vec<PathBuf>> {
         Ok(std::fs::read_dir(dir)?
@@ -1465,6 +1471,7 @@ mod utils {
 use std::path::PathBuf;
 
 use clap::Parser;
+use flexi_logger::Logger;
 use utils::DEFAULT_DEPOT_FILE_NAME;
 
 #[derive(Parser, Debug)]
@@ -1478,8 +1485,19 @@ pub struct Flags {
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
+    /// A level of verbosity, and can be used multiple times
+    ///
+    /// Level 1 - Info
+    ///
+    /// Level 2 - Debug
+    ///
+    /// Level 3 - Trace
+    #[clap(short, long, parse(from_occurrences))]
+    verbose: i32,
+
     #[clap(flatten)]
     flags: Flags,
+
     #[clap(subcommand)]
     command: SubCommand,
 }
@@ -1497,6 +1515,19 @@ enum SubCommand {
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+
+    let log_level = match args.verbose {
+        0 => "warn",
+        1 => "info",
+        2 => "debug",
+        _ => "trace",
+    };
+
+    Logger::try_with_env_or_str(log_level)?
+        .format(flexi_logger::colored_default_format)
+        .set_palette("196;208;32;198;15".to_string())
+        .start()?;
+
     match args.command {
         SubCommand::Init(cmd_args) => command_init(args.flags, cmd_args),
         SubCommand::Link(cmd_args) => command_link(args.flags, cmd_args),
