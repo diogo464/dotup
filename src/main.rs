@@ -24,6 +24,12 @@ pub mod depot {
         NotFound,
     }
 
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum DirNode {
+        Link(LinkID),
+        Directory(PathBuf),
+    }
+
     #[derive(Debug)]
     pub struct LinkView<'a> {
         link_id: LinkID,
@@ -96,15 +102,15 @@ pub mod depot {
     }
 
     impl Depot {
-        pub fn create(
+        pub fn link_create(
             &mut self,
             origin: impl AsRef<Path>,
             destination: impl AsRef<Path>,
         ) -> anyhow::Result<LinkID> {
             let origin = origin.as_ref();
             let destination = destination.as_ref();
-            verify_path(origin)?;
-            verify_path(destination)?;
+            verify_link_path(origin)?;
+            verify_link_path(destination)?;
 
             // example
             // origin = fish/config.fish
@@ -141,13 +147,13 @@ pub mod depot {
         /// if the link is already at the destination nothing is done.
         /// if the destination is another link that that link is removed.
         /// if the destination is under another link then an error is returned.
-        pub fn move_link(
+        pub fn link_move(
             &mut self,
             link_id: LinkID,
             destination: impl AsRef<Path>,
         ) -> anyhow::Result<()> {
             let destination = destination.as_ref();
-            verify_path(destination)?;
+            verify_link_path(destination)?;
 
             let link_node_id = self.links[link_id].node_id;
             let link_parent_node_id = self.nodes[link_node_id].parent;
@@ -168,7 +174,7 @@ pub mod depot {
                         self.node_child_remove(link_parent_node_id, link_node_id);
                         self.node_child_add(node_parent_id, link_node_id);
                         self.node_set_parent(link_node_id, node_parent_id);
-                        self.remove(node_link_id);
+                        self.link_remove(node_link_id);
                         let new_origin = self.node_build_path(link_node_id);
                         self.links[link_id].origin = new_origin;
                         Ok(())
@@ -195,7 +201,7 @@ pub mod depot {
             }
         }
 
-        pub fn remove(&mut self, link_id: LinkID) {
+        pub fn link_remove(&mut self, link_id: LinkID) {
             let node_id = self.links[link_id].node_id;
             self.node_remove(node_id);
             self.links.remove(link_id);
@@ -212,15 +218,18 @@ pub mod depot {
         /// returns SearchResult::Found(..) if there is a link at `origin`.
         /// returns SearchResult::Ancestor(..) if an ancestor of `origin` is linked.
         /// returns SearchResult::NotFound otherwise.
-        pub fn search(&self, origin: impl AsRef<Path>) -> anyhow::Result<SearchResult> {
+        pub fn link_search(&self, origin: impl AsRef<Path>) -> anyhow::Result<SearchResult> {
             let origin = origin.as_ref();
             verify_path(origin)?;
+            if origin.components().next().is_none() {
+                return Ok(SearchResult::NotFound);
+            }
             Ok(self.search_unchecked(&origin))
         }
 
         /// finds the link at origin.
-        pub fn find(&self, origin: impl AsRef<Path>) -> anyhow::Result<Option<LinkID>> {
-            match self.search(origin)? {
+        pub fn link_find(&self, origin: impl AsRef<Path>) -> anyhow::Result<Option<LinkID>> {
+            match self.link_search(origin)? {
                 SearchResult::Found(link_id) => Ok(Some(link_id)),
                 SearchResult::Ancestor(_) | SearchResult::NotFound => Ok(None),
             }
@@ -248,17 +257,55 @@ pub mod depot {
             Ok(link_ids.into_iter())
         }
 
+        pub fn has_links_under(&self, path: impl AsRef<Path>) -> anyhow::Result<bool> {
+            let path = path.as_ref();
+            verify_path(path)?;
+
+            match self.node_find(path) {
+                Some(node_id) => match &self.nodes[node_id].kind {
+                    NodeKind::Link(_) => Ok(true),
+                    NodeKind::Directory(children) => Ok(!children.is_empty()),
+                },
+                None => Ok(false),
+            }
+        }
+
         /// returns true if the `path` is a link or contains an ancestor that is linked.
         /// returns false otherwise.
-        pub fn is_linked(&self, path: impl AsRef<Path>) -> bool {
-            match self.search(path) {
+        pub fn link_exists(&self, path: impl AsRef<Path>) -> bool {
+            match self.link_search(path) {
                 Ok(SearchResult::Found(..)) | Ok(SearchResult::Ancestor(..)) => true,
                 _ => false,
             }
         }
 
+        pub fn read_dir(
+            &self,
+            path: impl AsRef<Path>,
+        ) -> anyhow::Result<impl Iterator<Item = DirNode> + '_> {
+            let path = path.as_ref();
+            verify_path(path)?;
+
+            let node_id = match self.node_find(path) {
+                Some(node_id) => node_id,
+                None => return Err(anyhow::anyhow!("Directory does not exist")),
+            };
+            let node = &self.nodes[node_id];
+            let children = match &node.kind {
+                NodeKind::Link(_) => return Err(anyhow::anyhow!("Path is not a directory")),
+                NodeKind::Directory(children) => children,
+            };
+            Ok(children.iter().map(|id| {
+                let node = &self.nodes[*id];
+                match &node.kind {
+                    NodeKind::Link(link_id) => DirNode::Link(*link_id),
+                    NodeKind::Directory(_) => DirNode::Directory(self.node_build_path(*id)),
+                }
+            }))
+        }
+
         fn search_unchecked(&self, origin: &Path) -> SearchResult {
-            debug_assert!(verify_path(origin).is_ok());
+            debug_assert!(verify_link_path(origin).is_ok());
 
             let mut origin_comps = iter_path_comps(&origin);
             let mut curr_node = self.root;
@@ -300,12 +347,12 @@ pub mod depot {
         }
 
         /// all the nodes up to the node to be created have to be directory nodes.
-        /// `path` must be a verified path.
+        /// `path` must be a verified link path.
         fn node_create_link(&mut self, path: &Path, link_id: LinkID) -> NodeID {
-            assert!(verify_path(path).is_ok());
+            assert!(verify_link_path(path).is_ok());
             let mut curr_node_id = self.root;
             let mut path_comps = iter_path_comps(path).peekable();
-            // unwrap: a verified path has atleast 1 component
+            // unwrap: a verified link path has atleast 1 component
             let mut curr_path_comp = path_comps.next().unwrap();
 
             while path_comps.peek().is_some() {
@@ -343,6 +390,11 @@ pub mod depot {
 
             let mut origin_comps = iter_path_comps(&path).peekable();
             let mut curr_node = self.root;
+
+            if origin_comps.peek().is_none() {
+                return (self.root, true);
+            }
+
             'outer: loop {
                 let node = &self.nodes[curr_node];
                 match origin_comps.next() {
@@ -475,7 +527,7 @@ pub mod depot {
             let mut depot = Depot::default();
             for disk_link in disk_links {
                 depot
-                    .create(disk_link.origin, disk_link.destination)
+                    .link_create(disk_link.origin, disk_link.destination)
                     .context("Failed to build depot from file. File is in an invalid state")?;
             }
             Ok(depot)
@@ -500,13 +552,20 @@ pub mod depot {
     /// + is not empty
     /// + is relative
     /// + does not contain Prefix/RootDir/ParentDir
-    fn verify_path(path: &Path) -> anyhow::Result<()> {
+    fn verify_link_path(path: &Path) -> anyhow::Result<()> {
         // make sure the path is not empty
-        // make sure the path is relative
-        // make sure the path does not contain '.' or '..'
         if path.components().next().is_none() {
             return Err(anyhow::anyhow!("Path cannot be empty"));
         }
+        verify_path(path)
+    }
+    /// a verified path is a path that:
+    /// + is not empty
+    /// + is relative
+    /// + does not contain Prefix/RootDir/ParentDir
+    fn verify_path(path: &Path) -> anyhow::Result<()> {
+        // make sure the path is relative
+        // make sure the path does not contain '.' or '..'
         for component in path.components() {
             match component {
                 std::path::Component::Prefix(_) => {
@@ -540,63 +599,180 @@ pub mod depot {
         use super::*;
 
         #[test]
-        fn test_depot_create() {
-            let mut depot = Depot::default();
-            depot.create("", "dest1.txt").unwrap_err();
-            depot.create("comp1.txt", "").unwrap_err();
-            depot.create("", "").unwrap_err();
+        fn test_verify_path() {
+            verify_path(Path::new("")).unwrap();
+            verify_path(Path::new("f1")).unwrap();
+            verify_path(Path::new("d1/f1")).unwrap();
+            verify_path(Path::new("d1/f1.txt")).unwrap();
+            verify_path(Path::new("d1/./f1.txt")).unwrap();
 
-            depot.create("comp1.txt", "dest1.txt").unwrap();
-            depot.create("comp1.txt", "dest1_updated.txt").unwrap();
-            depot
-                .create("./comp1.txt", "dest1_updated.txt")
-                .unwrap_err();
-            depot.create("/comp1.txt", "dest1.txt").unwrap_err();
-            depot.create("dir1/", "destdir1/").unwrap();
-            depot.create("dir1/file1.txt", "destfile1.txt").unwrap_err();
+            verify_path(Path::new("/")).unwrap_err();
+            verify_path(Path::new("./f1")).unwrap_err();
+            verify_path(Path::new("/d1/f1")).unwrap_err();
+            verify_path(Path::new("d1/../f1.txt")).unwrap_err();
+            verify_path(Path::new("/d1/../f1.txt")).unwrap_err();
         }
 
         #[test]
-        fn test_depot_move_link() {
+        fn test_verify_link_path() {
+            verify_link_path(Path::new("f1")).unwrap();
+            verify_link_path(Path::new("d1/f1")).unwrap();
+            verify_link_path(Path::new("d1/f1.txt")).unwrap();
+            verify_link_path(Path::new("d1/./f1.txt")).unwrap();
+
+            verify_link_path(Path::new("")).unwrap_err();
+            verify_link_path(Path::new("/")).unwrap_err();
+            verify_link_path(Path::new("./f1")).unwrap_err();
+            verify_link_path(Path::new("/d1/f1")).unwrap_err();
+            verify_link_path(Path::new("d1/../f1.txt")).unwrap_err();
+            verify_link_path(Path::new("/d1/../f1.txt")).unwrap_err();
+        }
+
+        #[test]
+        fn test_depot_link_create() {
             let mut depot = Depot::default();
-            let f1 = depot.create("d1/f1", "d1/f1").unwrap();
-            let _f2 = depot.create("d1/f2", "d1/f2").unwrap();
+            depot.link_create("", "dest1.txt").unwrap_err();
+            depot.link_create("comp1.txt", "").unwrap_err();
+            depot.link_create("", "").unwrap_err();
 
-            depot.move_link(f1, "").unwrap_err();
-            depot.move_link(f1, "d1/f2/f1").unwrap_err();
+            depot.link_create("comp1.txt", "dest1.txt").unwrap();
+            depot.link_create("comp1.txt", "dest1_updated.txt").unwrap();
+            depot
+                .link_create("./comp1.txt", "dest1_updated.txt")
+                .unwrap_err();
+            depot.link_create("/comp1.txt", "dest1.txt").unwrap_err();
+            depot.link_create("dir1/", "destdir1/").unwrap();
+            depot
+                .link_create("dir1/file1.txt", "destfile1.txt")
+                .unwrap_err();
+        }
 
-            depot.move_link(f1, "d1/f2").unwrap();
-            depot.move_link(f1, "f1").unwrap();
+        #[test]
+        fn test_depot_link_move() {
+            let mut depot = Depot::default();
+            let f1 = depot.link_create("d1/f1", "d1/f1").unwrap();
+            let _f2 = depot.link_create("d1/f2", "d1/f2").unwrap();
+
+            depot.link_move(f1, "").unwrap_err();
+            depot.link_move(f1, "d1/f2/f1").unwrap_err();
+
+            depot.link_move(f1, "d1/f2").unwrap();
+            depot.link_move(f1, "f1").unwrap();
             assert_eq!(depot.link_view(f1).origin(), Path::new("f1"));
-            depot.move_link(f1, "f2").unwrap();
+            depot.link_move(f1, "f2").unwrap();
             assert_eq!(depot.link_view(f1).origin(), Path::new("f2"));
         }
 
         #[test]
-        fn test_depot_remove() {
+        fn test_depot_links_under() {
             let mut depot = Depot::default();
-            let f1 = depot.create("d1/f1", "d1/f1").unwrap();
-            assert_eq!(depot.search("d1/f1").unwrap(), SearchResult::Found(f1));
-            depot.remove(f1);
-            assert_eq!(depot.search("d1/f1").unwrap(), SearchResult::NotFound);
+            let f1 = depot.link_create("d1/f1", "d1/f1").unwrap();
+            let f2 = depot.link_create("d1/f2", "d1/f2").unwrap();
+            let f3 = depot.link_create("d1/f3", "d1/f3").unwrap();
+            let f4 = depot.link_create("d1/d2/f4", "d2/f4").unwrap();
+            let d3 = depot.link_create("d3", "d3").unwrap();
+
+            let under_f1 = depot.links_under("d1/f1").unwrap().collect::<Vec<_>>();
+            assert_eq!(under_f1, vec![f1]);
+
+            let under_d1 = depot.links_under("d1").unwrap().collect::<Vec<_>>();
+            let expected_under_d1 = vec![f1, f2, f3, f4];
+            assert!(
+                under_d1.len() == expected_under_d1.len()
+                    && expected_under_d1.iter().all(|x| under_d1.contains(x))
+            );
+
+            let under_d2 = depot.links_under("d2").unwrap().collect::<Vec<_>>();
+            assert_eq!(under_d2, vec![]);
+
+            let under_d3 = depot.links_under("d3").unwrap().collect::<Vec<_>>();
+            assert_eq!(under_d3, vec![d3]);
+
+            let under_root = depot.links_under("").unwrap().collect::<Vec<_>>();
+            let expected_under_root = vec![f1, f2, f3, f4, d3];
+            assert!(
+                under_root.len() == expected_under_root.len()
+                    && expected_under_root.iter().all(|x| under_root.contains(x))
+            );
         }
 
         #[test]
-        fn test_depot_search() {
+        fn test_depot_has_links_under() {
             let mut depot = Depot::default();
-            let f1 = depot.create("d1/f1", "d1/f1").unwrap();
-            let f2 = depot.create("d1/f2", "d1/f2").unwrap();
-            let f3 = depot.create("d1/f3", "d1/f3").unwrap();
-            let f4 = depot.create("d1/d2/f4", "d2/f4").unwrap();
-            let d3 = depot.create("d3", "d3").unwrap();
+            let _f1 = depot.link_create("d1/f1", "d1/f1").unwrap();
+            let _f2 = depot.link_create("d1/f2", "d1/f2").unwrap();
+            let _f3 = depot.link_create("d1/f3", "d1/f3").unwrap();
+            let _f4 = depot.link_create("d1/d2/f4", "d2/f4").unwrap();
+            let _d3 = depot.link_create("d3", "d3").unwrap();
 
-            assert_eq!(depot.search("d1").unwrap(), SearchResult::NotFound,);
-            assert_eq!(depot.search("d1/f1").unwrap(), SearchResult::Found(f1),);
-            assert_eq!(depot.search("d1/f2").unwrap(), SearchResult::Found(f2),);
-            assert_eq!(depot.search("d1/f3").unwrap(), SearchResult::Found(f3),);
-            assert_eq!(depot.search("d1/d2/f4").unwrap(), SearchResult::Found(f4),);
-            assert_eq!(depot.search("d1/d2/f5").unwrap(), SearchResult::NotFound,);
-            assert_eq!(depot.search("d3/f6").unwrap(), SearchResult::Ancestor(d3),);
+            assert!(depot.has_links_under("").unwrap());
+            assert!(depot.has_links_under("d1").unwrap());
+            assert!(depot.has_links_under("d3").unwrap());
+            assert!(depot.has_links_under("d1/f1").unwrap());
+            assert!(depot.has_links_under("d1/d2").unwrap());
+            assert!(depot.has_links_under("d1/d2/f4").unwrap());
+
+            assert!(!depot.has_links_under("d2").unwrap());
+            assert!(!depot.has_links_under("d4").unwrap());
+            assert!(!depot.has_links_under("d1/d2/f4/f5").unwrap());
+        }
+
+        #[test]
+        fn test_depot_link_remove() {
+            let mut depot = Depot::default();
+            let f1 = depot.link_create("d1/f1", "d1/f1").unwrap();
+            assert_eq!(depot.link_search("d1/f1").unwrap(), SearchResult::Found(f1));
+            depot.link_remove(f1);
+            assert_eq!(depot.link_search("d1/f1").unwrap(), SearchResult::NotFound);
+        }
+
+        #[test]
+        fn test_depot_link_search() {
+            let mut depot = Depot::default();
+            let f1 = depot.link_create("d1/f1", "d1/f1").unwrap();
+            let f2 = depot.link_create("d1/f2", "d1/f2").unwrap();
+            let f3 = depot.link_create("d1/f3", "d1/f3").unwrap();
+            let f4 = depot.link_create("d1/d2/f4", "d2/f4").unwrap();
+            let d3 = depot.link_create("d3", "d3").unwrap();
+
+            assert_eq!(depot.link_search("d1").unwrap(), SearchResult::NotFound,);
+            assert_eq!(depot.link_search("d1/f1").unwrap(), SearchResult::Found(f1),);
+            assert_eq!(depot.link_search("d1/f2").unwrap(), SearchResult::Found(f2),);
+            assert_eq!(depot.link_search("d1/f3").unwrap(), SearchResult::Found(f3),);
+            assert_eq!(
+                depot.link_search("d1/d2/f4").unwrap(),
+                SearchResult::Found(f4),
+            );
+            assert_eq!(
+                depot.link_search("d1/d2/f5").unwrap(),
+                SearchResult::NotFound,
+            );
+            assert_eq!(
+                depot.link_search("d3/f6").unwrap(),
+                SearchResult::Ancestor(d3),
+            );
+        }
+
+        #[test]
+        fn test_depot_read_dir() {
+            let mut depot = Depot::default();
+            let f1 = depot.link_create("d1/f1", "d1/f1").unwrap();
+            let f2 = depot.link_create("d1/f2", "d1/f2").unwrap();
+            let f3 = depot.link_create("d1/f3", "d1/f3").unwrap();
+            let _f4 = depot.link_create("d1/d2/f4", "d2/f4").unwrap();
+            let _d3 = depot.link_create("d3", "d3").unwrap();
+
+            let read_dir = depot.read_dir("d1").unwrap().collect::<Vec<_>>();
+            let expected_read_dir = vec![
+                DirNode::Link(f1),
+                DirNode::Link(f2),
+                DirNode::Link(f3),
+                DirNode::Directory(PathBuf::from("d1/d2")),
+            ];
+            assert!(
+                read_dir.len() == expected_read_dir.len()
+                    && expected_read_dir.iter().all(|x| read_dir.contains(x))
+            );
         }
 
         #[test]
@@ -612,8 +788,9 @@ pub mod depot {
     }
 }
 
-mod dotup {
+pub mod dotup {
     use std::{
+        cmp::Ordering,
         collections::HashSet,
         path::{Path, PathBuf},
     };
@@ -622,7 +799,7 @@ mod dotup {
     use anyhow::Context;
 
     use crate::{
-        depot::{self, Depot, LinkID},
+        depot::{self, Depot, DirNode, LinkID},
         utils,
     };
 
@@ -631,6 +808,90 @@ mod dotup {
         link_id: LinkID,
         origin: PathBuf,
         destination: PathBuf,
+    }
+
+    #[derive(Debug, Clone)]
+    enum StatusItem {
+        Link {
+            origin: PathBuf,
+            destination: PathBuf,
+            is_directory: bool,
+        },
+        Directory {
+            origin: PathBuf,
+            items: Vec<StatusItem>,
+        },
+        Unlinked {
+            origin: PathBuf,
+            is_directory: bool,
+        },
+    }
+
+    impl StatusItem {
+        fn display_ord_cmp(&self, other: &Self) -> Ordering {
+            match (self, other) {
+                (
+                    StatusItem::Link {
+                        origin: l_origin, ..
+                    },
+                    StatusItem::Link {
+                        origin: r_origin, ..
+                    },
+                ) => l_origin.cmp(r_origin),
+                (StatusItem::Link { .. }, StatusItem::Directory { .. }) => Ordering::Less,
+                (
+                    StatusItem::Link {
+                        is_directory: l_is_dir,
+                        ..
+                    },
+                    StatusItem::Unlinked {
+                        is_directory: u_is_dir,
+                        ..
+                    },
+                ) => {
+                    if *u_is_dir && !*l_is_dir {
+                        Ordering::Less
+                    } else {
+                        Ordering::Greater
+                    }
+                }
+                (StatusItem::Directory { .. }, StatusItem::Link { .. }) => Ordering::Greater,
+                (
+                    StatusItem::Directory {
+                        origin: l_origin, ..
+                    },
+                    StatusItem::Directory {
+                        origin: r_origin, ..
+                    },
+                ) => l_origin.cmp(r_origin),
+                (StatusItem::Directory { .. }, StatusItem::Unlinked { .. }) => Ordering::Greater,
+                (
+                    StatusItem::Unlinked {
+                        is_directory: u_is_dir,
+                        ..
+                    },
+                    StatusItem::Link {
+                        is_directory: l_is_dir,
+                        ..
+                    },
+                ) => {
+                    if *u_is_dir && !*l_is_dir {
+                        Ordering::Greater
+                    } else {
+                        Ordering::Less
+                    }
+                }
+                (StatusItem::Unlinked { .. }, StatusItem::Directory { .. }) => Ordering::Less,
+                (
+                    StatusItem::Unlinked {
+                        origin: l_origin, ..
+                    },
+                    StatusItem::Unlinked {
+                        origin: r_origin, ..
+                    },
+                ) => l_origin.cmp(r_origin),
+            }
+        }
     }
 
     #[derive(Debug)]
@@ -664,7 +925,7 @@ mod dotup {
             let link_result: anyhow::Result<()> = try {
                 let origin = self.prepare_origin_path(origin.as_ref())?;
                 let destination = destination.as_ref();
-                self.depot.create(origin, destination)?;
+                self.depot.link_create(origin, destination)?;
             };
             match link_result {
                 Ok(_) => {}
@@ -676,10 +937,10 @@ mod dotup {
             for origin in paths {
                 let unlink_result: anyhow::Result<()> = try {
                     let origin = self.prepare_origin_path(origin.as_ref())?;
-                    let search_results = self.depot.search(&origin)?;
+                    let search_results = self.depot.link_search(&origin)?;
                     match search_results {
                         depot::SearchResult::Found(link_id) => {
-                            self.depot.remove(link_id);
+                            self.depot.link_remove(link_id);
                             println!("removed link {}", origin.display());
                         }
                         depot::SearchResult::Ancestor(_) | depot::SearchResult::NotFound => {
@@ -766,7 +1027,7 @@ mod dotup {
         }
 
         fn mv_one(&mut self, origin: &Path, destination: &Path) -> anyhow::Result<()> {
-            let link_id = match self.depot.find(origin)? {
+            let link_id = match self.depot.link_find(origin)? {
                 Some(link_id) => link_id,
                 None => {
                     return Err(anyhow::anyhow!(format!(
@@ -777,11 +1038,11 @@ mod dotup {
             };
             let is_installed = self.symlink_is_installed_by_link_id(link_id)?;
             let original_origin = self.depot.link_view(link_id).origin().to_owned();
-            self.depot.move_link(link_id, destination)?;
+            self.depot.link_move(link_id, destination)?;
             // move the actual file on disk
             if let Err(e) = std::fs::rename(origin, destination).context("Failed to move file") {
                 // unwrap: moving the link back to its origin place has to work
-                self.depot.move_link(link_id, original_origin).unwrap();
+                self.depot.link_move(link_id, original_origin).unwrap();
                 return Err(e);
             }
             // reinstall because we just moved the origin
@@ -794,74 +1055,153 @@ mod dotup {
 
         pub fn status(&self) {
             let status_result: anyhow::Result<()> = try {
-                let curr_dir = utils::current_working_directory();
-                let (dirs, files) = utils::collect_read_dir_split(curr_dir)?;
+                let canonical_dir = utils::current_working_directory();
+                let item = self.status_path_to_item(&canonical_dir)?;
+                self.status_print_item(item, 0)?;
             };
             if let Err(e) = status_result {
                 println!("error while displaying status : {e}");
             }
         }
+        fn status_path_to_item(&self, canonical_path: &Path) -> anyhow::Result<StatusItem> {
+            debug_assert!(canonical_path.is_absolute());
+            debug_assert!(canonical_path.exists());
+            let relative_path = self.prepare_origin_path(&canonical_path)?;
 
-        pub fn status2(&self) {
-            let status_result: anyhow::Result<()> = try {
-                let curr_dir = &std::env::current_dir()?;
-                let (dirs, files) = utils::collect_read_dir_split(curr_dir)?;
-                for path in dirs.iter().chain(files.iter()) {
-                    self.print_status_for(&path, 0)?;
-                }
-            };
-            if let Err(e) = status_result {
-                println!("error while displaying status : {e}");
-            }
-        }
+            let item = if canonical_path.is_dir() {
+                if let Some(link_id) = self.depot.link_find(&relative_path)? {
+                    let destination = self.depot.link_view(link_id).destination().to_owned();
+                    StatusItem::Link {
+                        origin: relative_path,
+                        destination,
+                        is_directory: true,
+                    }
+                } else if self.depot.has_links_under(&relative_path)? {
+                    let mut items = Vec::new();
+                    let mut collected_rel_paths = HashSet::<PathBuf>::new();
+                    let directory_paths = utils::collect_paths_in_dir(&canonical_path)?;
+                    for canonical_item_path in directory_paths {
+                        let item = self.status_path_to_item(&canonical_item_path)?;
+                        match &item {
+                            StatusItem::Link { origin, .. }
+                            | StatusItem::Directory { origin, .. } => {
+                                collected_rel_paths.insert(origin.to_owned());
+                            }
+                            _ => {}
+                        }
+                        items.push(item);
+                    }
 
-        fn print_status_for(&self, path: &Path, depth: u32) -> anyhow::Result<()> {
-            fn print_depth(d: u32) {
-                for _ in 0..d {
-                    print!("  ");
-                }
-            }
+                    for dir_node in self.depot.read_dir(&relative_path)? {
+                        match dir_node {
+                            DirNode::Link(link_id) => {
+                                let link_view = self.depot.link_view(link_id);
+                                let link_rel_path = link_view.origin();
+                                let link_rel_dest = link_view.destination();
+                                if !collected_rel_paths.contains(link_rel_path) {
+                                    items.push(StatusItem::Link {
+                                        origin: link_rel_path.to_owned(),
+                                        destination: link_rel_dest.to_owned(),
+                                        is_directory: false,
+                                    });
+                                }
+                            }
+                            DirNode::Directory(_) => {}
+                        }
+                    }
 
-            let origin = self.prepare_origin_path(path)?;
-            if path.is_dir() {
-                print_depth(depth);
-                let file_name = path.file_name().unwrap().to_str().unwrap_or_default();
-                if let Some(link_id) = self.depot.find(&origin)? {
-                    let installed = self.symlink_is_installed_by_link_id(link_id)?;
-                    let link_view = self.depot.link_view(link_id);
-                    let destination = link_view.destination().display().to_string();
-                    let color = if installed { Color::Green } else { Color::Red };
-                    println!(
-                        "{}/ ---> {}",
-                        color.paint(file_name),
-                        Color::Blue.paint(destination)
-                    );
+                    StatusItem::Directory {
+                        origin: relative_path,
+                        items,
+                    }
                 } else {
-                    println!("{}/", file_name);
-                    let (dirs, files) = utils::collect_read_dir_split(path)?;
-                    for path in dirs.iter().chain(files.iter()) {
-                        self.print_status_for(&path, depth + 1)?;
+                    StatusItem::Unlinked {
+                        origin: relative_path,
+                        is_directory: true,
                     }
                 }
-            } else if path.is_file() || path.is_symlink() {
-                print_depth(depth);
-                let file_name = path.file_name().unwrap().to_str().unwrap_or_default();
-                if let Some(link_id) = self.depot.find(&origin)? {
-                    let installed = self.symlink_is_installed_by_link_id(link_id)?;
-                    let link_view = self.depot.link_view(link_id);
-                    let destination = link_view.destination().display().to_string();
-                    let color = if installed { Color::Green } else { Color::Red };
-
-                    println!(
-                        "{} ---> {}",
-                        color.paint(file_name),
-                        Color::Blue.paint(destination)
-                    );
+            } else {
+                if let Some(link_id) = self.depot.link_find(&relative_path)? {
+                    let destination = self.depot.link_view(link_id).destination().to_owned();
+                    StatusItem::Link {
+                        origin: relative_path,
+                        destination,
+                        is_directory: false,
+                    }
                 } else {
-                    println!("{}", file_name);
+                    StatusItem::Unlinked {
+                        origin: relative_path,
+                        is_directory: false,
+                    }
+                }
+            };
+            Ok(item)
+        }
+        fn status_print_item(&self, item: StatusItem, depth: u32) -> anyhow::Result<()> {
+            fn print_depth(d: u32) {
+                for _ in 0..d.saturating_sub(1) {
+                    print!("    ");
+                }
+            }
+            fn origin_color(exists: bool, is_installed: bool) -> Color {
+                if !exists {
+                    return Color::Red;
+                } else if is_installed {
+                    Color::Green
+                } else {
+                    Color::Cyan
+                }
+            }
+
+            let destination_color = Color::Blue;
+
+            print_depth(depth);
+            match item {
+                StatusItem::Link {
+                    origin,
+                    destination,
+                    is_directory,
+                } => {
+                    let canonical_origin = self.depot_dir.join(&origin);
+                    let canonical_destination = self.install_base.join(&destination);
+                    let file_name = Self::status_get_filename(&canonical_origin);
+                    let is_installed =
+                        self.symlink_is_installed(&canonical_origin, &canonical_destination)?;
+                    let exists = canonical_origin.exists();
+                    let origin_color = origin_color(exists, is_installed);
+                    let directory_extra = if is_directory { "/" } else { "" };
+                    println!(
+                        "{}{} -> {}",
+                        origin_color.paint(file_name),
+                        directory_extra,
+                        destination_color.paint(destination.display().to_string())
+                    );
+                }
+                StatusItem::Directory { origin, mut items } => {
+                    items.sort_by(|a, b| StatusItem::display_ord_cmp(a, b).reverse());
+                    let directory_name = Self::status_get_filename(&origin);
+                    if depth != 0 {
+                        println!("{}/", directory_name);
+                    }
+                    for item in items {
+                        self.status_print_item(item, depth + 1)?;
+                    }
+                }
+                StatusItem::Unlinked {
+                    origin,
+                    is_directory,
+                } => {
+                    let file_name = Self::status_get_filename(&origin);
+                    let directory_extra = if is_directory { "/" } else { "" };
+                    println!("{}{}", file_name, directory_extra);
                 }
             }
             Ok(())
+        }
+        fn status_get_filename(path: &Path) -> &str {
+            path.file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default()
         }
 
         fn prepare_origin_path(&self, origin: &Path) -> anyhow::Result<PathBuf> {
@@ -994,10 +1334,16 @@ mod utils {
     pub fn collect_read_dir_split(
         dir: impl AsRef<Path>,
     ) -> anyhow::Result<(Vec<PathBuf>, Vec<PathBuf>)> {
+        Ok(collect_paths_in_dir(dir)?
+            .into_iter()
+            .partition(|p| p.is_dir()))
+    }
+
+    pub fn collect_paths_in_dir(dir: impl AsRef<Path>) -> anyhow::Result<Vec<PathBuf>> {
         Ok(std::fs::read_dir(dir)?
             .filter_map(|e| e.ok())
             .map(|e| e.path())
-            .partition(|p| p.is_dir()))
+            .collect())
     }
 
     pub fn read_dotup(flags: &Flags) -> anyhow::Result<Dotup> {
