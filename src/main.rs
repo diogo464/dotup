@@ -3,6 +3,7 @@
 // TODO: rewrite all errors so they start with lower case
 
 mod depot {
+    use anyhow::Context;
     use std::{
         collections::HashSet,
         ffi::{OsStr, OsString},
@@ -26,14 +27,6 @@ mod depot {
         InvalidPath,
         #[error("path must be relative and not empty")]
         InvalidLinkPath,
-        #[error("{0}")]
-        LinkCreateError(#[from] LinkCreateError),
-    }
-
-    #[derive(Debug, Error)]
-    enum LinkCreateError {
-        #[error("an ancestor of this path is already linked")]
-        AncestorAlreadyLinked,
     }
 
     #[derive(Debug, Clone)]
@@ -470,6 +463,17 @@ mod depot {
             Ok(self.has_links_under_unchecked(path))
         }
 
+        pub fn links_verify_install(&self, link_ids: impl Iterator<Item = LinkID>) -> Result<()> {
+            let mut destination = DepotTree::default();
+            for link_id in link_ids {
+                let link = &self.links[link_id];
+                destination
+                    .link_create(&link.destination, link_id)
+                    .context("link destinations overlap")?;
+            }
+            Ok(())
+        }
+
         pub fn link_view(&self, link_id: LinkID) -> LinkView {
             LinkView {
                 link_id,
@@ -778,6 +782,22 @@ mod depot {
         }
 
         #[test]
+        fn test_depot_links_verify_install() {
+            let mut depot = Depot::default();
+            let f1 = depot.link_create("nvim", ".config/nvim").unwrap();
+            let f2 = depot.link_create("alacritty", ".config/alacritty").unwrap();
+            let f3 = depot.link_create("bash/.bashrc", ".bashrc").unwrap();
+            let f4 = depot.link_create("bash_laptop/.bashrc", ".bashrc").unwrap();
+
+            depot
+                .links_verify_install(vec![f1, f2, f3].into_iter())
+                .unwrap();
+            depot
+                .links_verify_install(vec![f1, f2, f3, f4].into_iter())
+                .unwrap_err();
+        }
+
+        #[test]
         fn test_depot_read_dir() {
             let mut depot = Depot::default();
             let f1 = depot.link_create("d1/f1", "d1/f1").unwrap();
@@ -833,792 +853,6 @@ mod depot {
         fn test_path_iter_comps() {
             let path = Path::new("comp1/comp2/./comp3/file.txt");
             let mut iter = path_iter_comps(path);
-            assert_eq!(iter.next(), Some(OsStr::new("comp1")));
-            assert_eq!(iter.next(), Some(OsStr::new("comp2")));
-            assert_eq!(iter.next(), Some(OsStr::new("comp3")));
-            assert_eq!(iter.next(), Some(OsStr::new("file.txt")));
-            assert_eq!(iter.next(), None);
-        }
-    }
-}
-
-pub mod depot2 {
-    use std::{
-        collections::HashSet,
-        ffi::{OsStr, OsString},
-        ops::Deref,
-        path::{Path, PathBuf},
-    };
-
-    use slotmap::{Key, SlotMap};
-
-    pub use disk::{read, write};
-
-    slotmap::new_key_type! {pub struct LinkID;}
-    slotmap::new_key_type! {struct NodeID;}
-
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub enum SearchResult {
-        Found(LinkID),
-        Ancestor(LinkID),
-        NotFound,
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub enum DirNode {
-        Link(LinkID),
-        Directory(PathBuf),
-    }
-
-    #[derive(Debug)]
-    pub struct LinkView<'a> {
-        link_id: LinkID,
-        depot: &'a Depot,
-    }
-
-    impl<'a> LinkView<'a> {
-        pub fn origin(&self) -> &Path {
-            &self.depot.links[self.link_id].origin
-        }
-
-        pub fn destination(&self) -> &Path {
-            &self.depot.links[self.link_id].destination
-        }
-    }
-
-    // wrapper for a path under the depot
-    // this path is relative and does not contain `..` or similar
-    // Deref(Path)
-    struct DepotPath(PathBuf);
-    impl Deref for DepotPath {
-        type Target = Path;
-
-        fn deref(&self) -> &Self::Target {
-            self.0.deref()
-        }
-    }
-
-    #[derive(Debug, Clone)]
-    struct Node {
-        comp: OsString,
-        parent: NodeID,
-        kind: NodeKind,
-    }
-
-    #[derive(Debug, Clone)]
-    enum NodeKind {
-        Link(LinkID),
-        Directory(HashSet<NodeID>),
-    }
-
-    #[derive(Debug, Clone)]
-    struct Link {
-        origin: PathBuf,
-        destination: PathBuf,
-        node_id: NodeID,
-    }
-
-    #[derive(Debug, Clone)]
-    pub struct Depot {
-        links: SlotMap<LinkID, Link>,
-        nodes: SlotMap<NodeID, Node>,
-        root: NodeID,
-    }
-
-    impl Default for Depot {
-        fn default() -> Self {
-            let mut nodes = SlotMap::default();
-            let root = nodes.insert(Node {
-                comp: Default::default(),
-                parent: Default::default(),
-                kind: NodeKind::Directory(Default::default()),
-            });
-            Self {
-                links: Default::default(),
-                nodes,
-                root,
-            }
-        }
-    }
-
-    impl Depot {
-        pub fn link_create(
-            &mut self,
-            origin: impl AsRef<Path>,
-            destination: impl AsRef<Path>,
-        ) -> anyhow::Result<LinkID> {
-            let origin = origin.as_ref();
-            let destination = destination.as_ref();
-            verify_link_path(origin)?;
-            verify_link_path(destination)?;
-
-            // example
-            // origin = fish/config.fish
-            // destination = .config/fish/config.fish
-
-            // search
-            // if ancestor - return error
-            // if found - update destination
-            // if not found - create
-
-            match self.search_unchecked(&origin) {
-                SearchResult::Found(link_id) => {
-                    let link = &mut self.links[link_id];
-                    link.destination = destination.to_owned();
-                    Ok(link_id)
-                }
-                SearchResult::Ancestor(_) => Err(anyhow::anyhow!(
-                    "An ancestor of this path is already linked"
-                )),
-                SearchResult::NotFound => {
-                    let link_id = self.links.insert(Link {
-                        origin: origin.to_owned(),
-                        destination: destination.to_owned(),
-                        node_id: Default::default(),
-                    });
-                    let node_id = self.node_create_link(origin, link_id);
-                    self.links[link_id].node_id = node_id;
-                    Ok(link_id)
-                }
-            }
-        }
-
-        /// moves the link specified by `link_id` to the path at `destination`.
-        /// if the link is already at the destination nothing is done.
-        /// if the destination is another link that that link is removed.
-        /// if the destination is under another link then an error is returned.
-        pub fn link_move(
-            &mut self,
-            link_id: LinkID,
-            destination: impl AsRef<Path>,
-        ) -> anyhow::Result<()> {
-            let destination = destination.as_ref();
-            verify_link_path(destination)?;
-
-            let link_node_id = self.links[link_id].node_id;
-            let link_parent_node_id = self.nodes[link_node_id].parent;
-            let (node_id, found) = self.node_search(destination);
-
-            // the link is already at the destination
-            if found && node_id == link_node_id {
-                return Ok(());
-            }
-
-            if found {
-                let node = &self.nodes[node_id];
-                match &node.kind {
-                    NodeKind::Link(node_link_id) => {
-                        let node_parent_id = node.parent;
-                        let node_link_id = *node_link_id;
-                        assert_ne!(link_id, node_link_id);
-                        self.node_child_remove(link_parent_node_id, link_node_id);
-                        self.node_child_add(node_parent_id, link_node_id);
-                        self.node_set_parent(link_node_id, node_parent_id);
-                        self.link_remove(node_link_id);
-                        let new_origin = self.node_build_path(link_node_id);
-                        self.links[link_id].origin = new_origin;
-                        Ok(())
-                    }
-                    NodeKind::Directory(..) => Err(anyhow::anyhow!(
-                        "Cannot move link, other links exist under the destination"
-                    )),
-                }
-            } else {
-                let node = &self.nodes[node_id];
-                match &node.kind {
-                    NodeKind::Link(..) => Err(anyhow::anyhow!(
-                        "Cannot move link, an ancestor is already linked"
-                    )),
-                    NodeKind::Directory(_) => {
-                        let new_node_id = self.node_create_link(destination, link_id);
-                        let new_origin = self.node_build_path(new_node_id);
-                        self.node_remove(link_node_id);
-                        self.links[link_id].node_id = new_node_id;
-                        self.links[link_id].origin = new_origin;
-                        Ok(())
-                    }
-                }
-            }
-        }
-
-        pub fn link_remove(&mut self, link_id: LinkID) {
-            let node_id = self.links[link_id].node_id;
-            self.node_remove(node_id);
-            self.links.remove(link_id);
-        }
-
-        pub fn link_view(&self, link_id: LinkID) -> LinkView {
-            LinkView {
-                link_id,
-                depot: self,
-            }
-        }
-
-        /// searchs for the link at `origin`.
-        /// returns SearchResult::Found(..) if there is a link at `origin`.
-        /// returns SearchResult::Ancestor(..) if an ancestor of `origin` is linked.
-        /// returns SearchResult::NotFound otherwise.
-        pub fn link_search(&self, origin: impl AsRef<Path>) -> anyhow::Result<SearchResult> {
-            let origin = origin.as_ref();
-            verify_path(origin)?;
-            if origin.components().next().is_none() {
-                return Ok(SearchResult::NotFound);
-            }
-            Ok(self.search_unchecked(&origin))
-        }
-
-        /// finds the link at origin.
-        pub fn link_find(&self, origin: impl AsRef<Path>) -> anyhow::Result<Option<LinkID>> {
-            match self.link_search(origin)? {
-                SearchResult::Found(link_id) => Ok(Some(link_id)),
-                SearchResult::Ancestor(_) | SearchResult::NotFound => Ok(None),
-            }
-        }
-
-        /// returns an iterator for all the links at or under the given path.
-        pub fn links_under(
-            &self,
-            path: impl AsRef<Path>,
-        ) -> anyhow::Result<impl Iterator<Item = LinkID> + '_> {
-            let path = path.as_ref();
-            verify_path(path)?;
-
-            let mut link_ids = Vec::new();
-            if let Some(node_id) = self.node_find(path) {
-                let mut node_ids = vec![node_id];
-                while let Some(node_id) = node_ids.pop() {
-                    let node = &self.nodes[node_id];
-                    match &node.kind {
-                        NodeKind::Link(link_id) => link_ids.push(*link_id),
-                        NodeKind::Directory(children) => node_ids.extend(children.iter().copied()),
-                    }
-                }
-            }
-            Ok(link_ids.into_iter())
-        }
-
-        pub fn has_links_under(&self, path: impl AsRef<Path>) -> anyhow::Result<bool> {
-            let path = path.as_ref();
-            verify_path(path)?;
-
-            match self.node_find(path) {
-                Some(node_id) => match &self.nodes[node_id].kind {
-                    NodeKind::Link(_) => Ok(true),
-                    NodeKind::Directory(children) => Ok(!children.is_empty()),
-                },
-                None => Ok(false),
-            }
-        }
-
-        /// returns true if the `path` is a link or contains an ancestor that is linked.
-        /// returns false otherwise.
-        pub fn link_exists(&self, path: impl AsRef<Path>) -> bool {
-            match self.link_search(path) {
-                Ok(SearchResult::Found(..)) | Ok(SearchResult::Ancestor(..)) => true,
-                _ => false,
-            }
-        }
-
-        pub fn read_dir(
-            &self,
-            path: impl AsRef<Path>,
-        ) -> anyhow::Result<impl Iterator<Item = DirNode> + '_> {
-            let path = path.as_ref();
-            verify_path(path)?;
-
-            let node_id = match self.node_find(path) {
-                Some(node_id) => node_id,
-                None => return Err(anyhow::anyhow!("Directory does not exist")),
-            };
-            let node = &self.nodes[node_id];
-            let children = match &node.kind {
-                NodeKind::Link(_) => return Err(anyhow::anyhow!("Path is not a directory")),
-                NodeKind::Directory(children) => children,
-            };
-            Ok(children.iter().map(|id| {
-                let node = &self.nodes[*id];
-                match &node.kind {
-                    NodeKind::Link(link_id) => DirNode::Link(*link_id),
-                    NodeKind::Directory(_) => DirNode::Directory(self.node_build_path(*id)),
-                }
-            }))
-        }
-
-        fn search_unchecked(&self, origin: &Path) -> SearchResult {
-            debug_assert!(verify_link_path(origin).is_ok());
-
-            let mut origin_comps = iter_path_comps(&origin);
-            let mut curr_node = self.root;
-            'outer: loop {
-                let node = &self.nodes[curr_node];
-                let curr_comp = origin_comps.next();
-                match &node.kind {
-                    NodeKind::Link(link_id) => match curr_comp {
-                        Some(_) => break SearchResult::Ancestor(*link_id),
-                        None => break SearchResult::Found(*link_id),
-                    },
-                    NodeKind::Directory(children) => match curr_comp {
-                        Some(curr_comp) => {
-                            for &child_id in children.iter() {
-                                let child = &self.nodes[child_id];
-                                if &child.comp == curr_comp {
-                                    curr_node = child_id;
-                                    continue 'outer;
-                                }
-                            }
-                            break SearchResult::NotFound;
-                        }
-                        None => break SearchResult::NotFound,
-                    },
-                }
-            }
-        }
-
-        /// creates a new directory node with no children.
-        /// the node specified by `parent` must be a directory node.
-        fn node_create_dir_empty(&mut self, parent: NodeID, comp: OsString) -> NodeID {
-            let node_id = self.nodes.insert(Node {
-                comp,
-                parent,
-                kind: NodeKind::Directory(Default::default()),
-            });
-            self.node_child_add(parent, node_id);
-            node_id
-        }
-
-        /// all the nodes up to the node to be created have to be directory nodes.
-        /// `path` must be a verified link path.
-        fn node_create_link(&mut self, path: &Path, link_id: LinkID) -> NodeID {
-            assert!(verify_link_path(path).is_ok());
-            let mut curr_node_id = self.root;
-            let mut path_comps = iter_path_comps(path).peekable();
-            // unwrap: a verified link path has atleast 1 component
-            let mut curr_path_comp = path_comps.next().unwrap();
-
-            while path_comps.peek().is_some() {
-                let next_node = match self.node_children_search(curr_node_id, curr_path_comp) {
-                    Some(child_id) => child_id,
-                    None => self.node_create_dir_empty(curr_node_id, curr_path_comp.to_owned()),
-                };
-                curr_node_id = next_node;
-                // unwrap: we known next is Some beacause of this loop's condition
-                curr_path_comp = path_comps.next().unwrap();
-            }
-
-            let new_node = self.nodes.insert(Node {
-                comp: curr_path_comp.to_owned(),
-                parent: curr_node_id,
-                kind: NodeKind::Link(link_id),
-            });
-            self.node_child_add(curr_node_id, new_node);
-            new_node
-        }
-
-        /// finds the node at the given path.
-        /// `path` must be a verified path.
-        fn node_find(&self, path: &Path) -> Option<NodeID> {
-            match self.node_search(path) {
-                (node_id, true) => Some(node_id),
-                _ => None,
-            }
-        }
-
-        /// searches for the node at `path`. if that node does not exists then it returns the
-        /// closest node. return (closest_node, found)
-        fn node_search(&self, path: &Path) -> (NodeID, bool) {
-            debug_assert!(verify_path(path).is_ok());
-
-            let mut origin_comps = iter_path_comps(&path).peekable();
-            let mut curr_node = self.root;
-
-            if origin_comps.peek().is_none() {
-                return (self.root, true);
-            }
-
-            'outer: loop {
-                let node = &self.nodes[curr_node];
-                match origin_comps.next() {
-                    Some(curr_comp) => match &node.kind {
-                        NodeKind::Link(..) => break (curr_node, false),
-                        NodeKind::Directory(children) => {
-                            for &child_id in children.iter() {
-                                let child = &self.nodes[child_id];
-                                if &child.comp == curr_comp {
-                                    curr_node = child_id;
-                                    continue 'outer;
-                                }
-                            }
-                            break (curr_node, false);
-                        }
-                    },
-                    None => break (curr_node, true),
-                }
-            }
-        }
-
-        /// adds `new_child` to `node_id`'s children.
-        /// the node specified by `node_id` must be a directory node.
-        fn node_child_add(&mut self, node_id: NodeID, new_child: NodeID) {
-            let node = &mut self.nodes[node_id];
-            match node.kind {
-                NodeKind::Directory(ref mut children) => {
-                    children.insert(new_child);
-                }
-                _ => unreachable!(),
-            }
-        }
-
-        /// searchs for a child with the given comp and returns its id.
-        /// the node specified by `node_id` must be a directory node.
-        fn node_children_search(&self, node_id: NodeID, search_comp: &OsStr) -> Option<NodeID> {
-            let child_ids = match &self.nodes[node_id].kind {
-                NodeKind::Directory(c) => c,
-                _ => unreachable!(),
-            };
-            for &child_id in child_ids {
-                let child = &self.nodes[child_id];
-                if child.comp == search_comp {
-                    return Some(child_id);
-                }
-            }
-            None
-        }
-
-        /// removes `child` from `node_id`'s children.
-        /// the node specified by `node_id` must be a directory node and it must contain the node
-        /// `child`.
-        fn node_child_remove(&mut self, node_id: NodeID, child: NodeID) {
-            let node = &mut self.nodes[node_id];
-            let remove_node = match &mut node.kind {
-                NodeKind::Directory(children) => {
-                    let contained = children.remove(&child);
-                    assert!(contained);
-                    children.is_empty()
-                }
-                _ => unreachable!(),
-            };
-            if remove_node && node_id != self.root {
-                self.node_remove(node_id);
-            }
-        }
-
-        /// build the path that references this node.
-        fn node_build_path(&self, node_id: NodeID) -> PathBuf {
-            fn recursive_helper(nodes: &SlotMap<NodeID, Node>, nid: NodeID, pbuf: &mut PathBuf) {
-                if nid.is_null() {
-                    return;
-                }
-                let parent_id = nodes[nid].parent;
-                recursive_helper(nodes, parent_id, pbuf);
-                pbuf.push(&nodes[nid].comp);
-            }
-
-            let mut node_path = PathBuf::default();
-            recursive_helper(&self.nodes, node_id, &mut node_path);
-            node_path
-        }
-
-        fn node_set_parent(&mut self, node_id: NodeID, parent: NodeID) {
-            self.nodes[node_id].parent = parent;
-        }
-
-        fn node_remove(&mut self, node_id: NodeID) {
-            debug_assert!(node_id != self.root);
-            debug_assert!(self.nodes.contains_key(node_id));
-
-            let node = self.nodes.remove(node_id).unwrap();
-            match node.kind {
-                NodeKind::Link(..) => {}
-                NodeKind::Directory(children) => {
-                    // Right now directory nodes are only removed from inside this function and
-                    // we do not remove directories with children
-                    assert!(children.is_empty());
-                }
-            }
-            let parent_id = node.parent;
-            self.node_child_remove(parent_id, node_id);
-        }
-    }
-
-    mod disk {
-        use std::path::{Path, PathBuf};
-
-        use anyhow::Context;
-        use serde::{Deserialize, Serialize};
-
-        use super::Depot;
-
-        #[derive(Debug, Serialize, Deserialize)]
-        struct DiskLink {
-            origin: PathBuf,
-            destination: PathBuf,
-        }
-
-        #[derive(Debug, Serialize, Deserialize)]
-        struct DiskLinks {
-            links: Vec<DiskLink>,
-        }
-
-        pub fn read(path: &Path) -> anyhow::Result<Depot> {
-            let contents = std::fs::read_to_string(path).context("Failed to read depot file")?;
-            let disk_links = toml::from_str::<DiskLinks>(&contents)
-                .context("Failed to parse depot file")?
-                .links;
-            let mut depot = Depot::default();
-            for disk_link in disk_links {
-                depot
-                    .link_create(disk_link.origin, disk_link.destination)
-                    .context("Failed to build depot from file. File is in an invalid state")?;
-            }
-            Ok(depot)
-        }
-
-        pub fn write(path: &Path, depot: &Depot) -> anyhow::Result<()> {
-            let mut links = Vec::with_capacity(depot.links.len());
-            for (_, link) in depot.links.iter() {
-                links.push(DiskLink {
-                    origin: link.origin.clone(),
-                    destination: link.destination.clone(),
-                });
-            }
-            let contents = toml::to_string_pretty(&DiskLinks { links })
-                .context("Failed to serialize depot")?;
-            std::fs::write(path, contents).context("Failed to write depot to file")?;
-            Ok(())
-        }
-    }
-
-    /// a verified path is a path that:
-    /// + is not empty
-    /// + is relative
-    /// + does not contain Prefix/RootDir/ParentDir
-    fn verify_link_path(path: &Path) -> anyhow::Result<()> {
-        // make sure the path is not empty
-        if path.components().next().is_none() {
-            return Err(anyhow::anyhow!("Path cannot be empty"));
-        }
-        verify_path(path)
-    }
-    /// a verified path is a path that:
-    /// + is not empty
-    /// + is relative
-    /// + does not contain Prefix/RootDir/ParentDir
-    fn verify_path(path: &Path) -> anyhow::Result<()> {
-        // make sure the path is relative
-        // make sure the path does not contain '.' or '..'
-        for component in path.components() {
-            match component {
-                std::path::Component::Prefix(_) => {
-                    return Err(anyhow::anyhow!("Path cannot have prefix"))
-                }
-                std::path::Component::RootDir => {
-                    return Err(anyhow::anyhow!("Path must be relative"))
-                }
-                std::path::Component::CurDir | std::path::Component::ParentDir => {
-                    return Err(anyhow::anyhow!("Path cannot contain '.' or '..'"))
-                }
-                std::path::Component::Normal(_) => {}
-            }
-        }
-        Ok(())
-    }
-
-    /// Iterate over the components of a path.
-    /// # Pre
-    /// The path can only have "Normal" components.
-    fn iter_path_comps(path: &Path) -> impl Iterator<Item = &OsStr> {
-        debug_assert!(verify_path(path).is_ok());
-        path.components().map(|component| match component {
-            std::path::Component::Normal(comp) => comp,
-            _ => unreachable!(),
-        })
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-
-        #[test]
-        fn test_verify_path() {
-            verify_path(Path::new("")).unwrap();
-            verify_path(Path::new("f1")).unwrap();
-            verify_path(Path::new("d1/f1")).unwrap();
-            verify_path(Path::new("d1/f1.txt")).unwrap();
-            verify_path(Path::new("d1/./f1.txt")).unwrap();
-
-            verify_path(Path::new("/")).unwrap_err();
-            verify_path(Path::new("./f1")).unwrap_err();
-            verify_path(Path::new("/d1/f1")).unwrap_err();
-            verify_path(Path::new("d1/../f1.txt")).unwrap_err();
-            verify_path(Path::new("/d1/../f1.txt")).unwrap_err();
-        }
-
-        #[test]
-        fn test_verify_link_path() {
-            verify_link_path(Path::new("f1")).unwrap();
-            verify_link_path(Path::new("d1/f1")).unwrap();
-            verify_link_path(Path::new("d1/f1.txt")).unwrap();
-            verify_link_path(Path::new("d1/./f1.txt")).unwrap();
-
-            verify_link_path(Path::new("")).unwrap_err();
-            verify_link_path(Path::new("/")).unwrap_err();
-            verify_link_path(Path::new("./f1")).unwrap_err();
-            verify_link_path(Path::new("/d1/f1")).unwrap_err();
-            verify_link_path(Path::new("d1/../f1.txt")).unwrap_err();
-            verify_link_path(Path::new("/d1/../f1.txt")).unwrap_err();
-        }
-
-        #[test]
-        fn test_depot_link_create() {
-            let mut depot = Depot::default();
-            depot.link_create("", "dest1.txt").unwrap_err();
-            depot.link_create("comp1.txt", "").unwrap_err();
-            depot.link_create("", "").unwrap_err();
-
-            depot.link_create("comp1.txt", "dest1.txt").unwrap();
-            depot.link_create("comp1.txt", "dest1_updated.txt").unwrap();
-            depot
-                .link_create("./comp1.txt", "dest1_updated.txt")
-                .unwrap_err();
-            depot.link_create("/comp1.txt", "dest1.txt").unwrap_err();
-            depot.link_create("dir1/", "destdir1/").unwrap();
-            depot
-                .link_create("dir1/file1.txt", "destfile1.txt")
-                .unwrap_err();
-        }
-
-        #[test]
-        fn test_depot_link_move() {
-            let mut depot = Depot::default();
-            let f1 = depot.link_create("d1/f1", "d1/f1").unwrap();
-            let _f2 = depot.link_create("d1/f2", "d1/f2").unwrap();
-
-            depot.link_move(f1, "").unwrap_err();
-            depot.link_move(f1, "d1/f2/f1").unwrap_err();
-
-            depot.link_move(f1, "d1/f2").unwrap();
-            depot.link_move(f1, "f1").unwrap();
-            assert_eq!(depot.link_view(f1).origin(), Path::new("f1"));
-            depot.link_move(f1, "f2").unwrap();
-            assert_eq!(depot.link_view(f1).origin(), Path::new("f2"));
-        }
-
-        #[test]
-        fn test_depot_links_under() {
-            let mut depot = Depot::default();
-            let f1 = depot.link_create("d1/f1", "d1/f1").unwrap();
-            let f2 = depot.link_create("d1/f2", "d1/f2").unwrap();
-            let f3 = depot.link_create("d1/f3", "d1/f3").unwrap();
-            let f4 = depot.link_create("d1/d2/f4", "d2/f4").unwrap();
-            let d3 = depot.link_create("d3", "d3").unwrap();
-
-            let under_f1 = depot.links_under("d1/f1").unwrap().collect::<Vec<_>>();
-            assert_eq!(under_f1, vec![f1]);
-
-            let under_d1 = depot.links_under("d1").unwrap().collect::<Vec<_>>();
-            let expected_under_d1 = vec![f1, f2, f3, f4];
-            assert!(
-                under_d1.len() == expected_under_d1.len()
-                    && expected_under_d1.iter().all(|x| under_d1.contains(x))
-            );
-
-            let under_d2 = depot.links_under("d2").unwrap().collect::<Vec<_>>();
-            assert_eq!(under_d2, vec![]);
-
-            let under_d3 = depot.links_under("d3").unwrap().collect::<Vec<_>>();
-            assert_eq!(under_d3, vec![d3]);
-
-            let under_root = depot.links_under("").unwrap().collect::<Vec<_>>();
-            let expected_under_root = vec![f1, f2, f3, f4, d3];
-            assert!(
-                under_root.len() == expected_under_root.len()
-                    && expected_under_root.iter().all(|x| under_root.contains(x))
-            );
-        }
-
-        #[test]
-        fn test_depot_has_links_under() {
-            let mut depot = Depot::default();
-            let _f1 = depot.link_create("d1/f1", "d1/f1").unwrap();
-            let _f2 = depot.link_create("d1/f2", "d1/f2").unwrap();
-            let _f3 = depot.link_create("d1/f3", "d1/f3").unwrap();
-            let _f4 = depot.link_create("d1/d2/f4", "d2/f4").unwrap();
-            let _d3 = depot.link_create("d3", "d3").unwrap();
-
-            assert!(depot.has_links_under("").unwrap());
-            assert!(depot.has_links_under("d1").unwrap());
-            assert!(depot.has_links_under("d3").unwrap());
-            assert!(depot.has_links_under("d1/f1").unwrap());
-            assert!(depot.has_links_under("d1/d2").unwrap());
-            assert!(depot.has_links_under("d1/d2/f4").unwrap());
-
-            assert!(!depot.has_links_under("d2").unwrap());
-            assert!(!depot.has_links_under("d4").unwrap());
-            assert!(!depot.has_links_under("d1/d2/f4/f5").unwrap());
-        }
-
-        #[test]
-        fn test_depot_link_remove() {
-            let mut depot = Depot::default();
-            let f1 = depot.link_create("d1/f1", "d1/f1").unwrap();
-            assert_eq!(depot.link_search("d1/f1").unwrap(), SearchResult::Found(f1));
-            depot.link_remove(f1);
-            assert_eq!(depot.link_search("d1/f1").unwrap(), SearchResult::NotFound);
-        }
-
-        #[test]
-        fn test_depot_link_search() {
-            let mut depot = Depot::default();
-            let f1 = depot.link_create("d1/f1", "d1/f1").unwrap();
-            let f2 = depot.link_create("d1/f2", "d1/f2").unwrap();
-            let f3 = depot.link_create("d1/f3", "d1/f3").unwrap();
-            let f4 = depot.link_create("d1/d2/f4", "d2/f4").unwrap();
-            let d3 = depot.link_create("d3", "d3").unwrap();
-
-            assert_eq!(depot.link_search("d1").unwrap(), SearchResult::NotFound,);
-            assert_eq!(depot.link_search("d1/f1").unwrap(), SearchResult::Found(f1),);
-            assert_eq!(depot.link_search("d1/f2").unwrap(), SearchResult::Found(f2),);
-            assert_eq!(depot.link_search("d1/f3").unwrap(), SearchResult::Found(f3),);
-            assert_eq!(
-                depot.link_search("d1/d2/f4").unwrap(),
-                SearchResult::Found(f4),
-            );
-            assert_eq!(
-                depot.link_search("d1/d2/f5").unwrap(),
-                SearchResult::NotFound,
-            );
-            assert_eq!(
-                depot.link_search("d3/f6").unwrap(),
-                SearchResult::Ancestor(d3),
-            );
-        }
-
-        #[test]
-        fn test_depot_read_dir() {
-            let mut depot = Depot::default();
-            let f1 = depot.link_create("d1/f1", "d1/f1").unwrap();
-            let f2 = depot.link_create("d1/f2", "d1/f2").unwrap();
-            let f3 = depot.link_create("d1/f3", "d1/f3").unwrap();
-            let _f4 = depot.link_create("d1/d2/f4", "d2/f4").unwrap();
-            let _d3 = depot.link_create("d3", "d3").unwrap();
-
-            let read_dir = depot.read_dir("d1").unwrap().collect::<Vec<_>>();
-            let expected_read_dir = vec![
-                DirNode::Link(f1),
-                DirNode::Link(f2),
-                DirNode::Link(f3),
-                DirNode::Directory(PathBuf::from("d1/d2")),
-            ];
-            assert!(
-                read_dir.len() == expected_read_dir.len()
-                    && expected_read_dir.iter().all(|x| read_dir.contains(x))
-            );
-        }
-
-        #[test]
-        fn test_iter_path_comps() {
-            let path = Path::new("comp1/comp2/./comp3/file.txt");
-            let mut iter = iter_path_comps(path);
             assert_eq!(iter.next(), Some(OsStr::new("comp1")));
             assert_eq!(iter.next(), Some(OsStr::new("comp2")));
             assert_eq!(iter.next(), Some(OsStr::new("comp3")));
@@ -1793,22 +1027,20 @@ pub mod dotup {
         }
 
         pub fn install(&self, paths: impl Iterator<Item = impl AsRef<Path>>) {
-            let mut already_linked: HashSet<LinkID> = Default::default();
-            for origin in paths {
-                let install_result: anyhow::Result<()> = try {
-                    let origin = self.prepare_relative_path(origin.as_ref())?;
-                    let canonical_pairs = self.canonical_pairs_under(&origin)?;
-                    for pair in canonical_pairs {
-                        if already_linked.contains(&pair.link_id) {
-                            continue;
-                        }
-                        self.symlink_install(&pair.origin, &pair.destination)?;
-                        already_linked.insert(pair.link_id);
-                    }
-                };
-                if let Err(e) = install_result {
-                    println!("error while installing {} : {e}", origin.as_ref().display());
+            let install_result: anyhow::Result<()> = try {
+                let mut link_ids = HashSet::<LinkID>::default();
+                for path in paths {
+                    let path = self.prepare_relative_path(path.as_ref())?;
+                    link_ids.extend(self.depot.links_under(&path)?);
                 }
+                self.depot.links_verify_install(link_ids.iter().copied())?;
+
+                for link_id in link_ids {
+                    self.symlink_install_by_link_id(link_id)?;
+                }
+            };
+            if let Err(e) = install_result {
+                println!("error while installing : {e}");
             }
         }
 
@@ -2447,7 +1679,11 @@ fn command_link(global_flags: Flags, args: LinkArgs) -> anyhow::Result<()> {
     let origins = if args.directory {
         vec![args.origin]
     } else {
-        utils::collect_files_in_dir_recursive(args.origin)?
+        if args.origin.is_dir() {
+            utils::collect_files_in_dir_recursive(args.origin)?
+        } else {
+            vec![args.origin]
+        }
     };
     for origin in origins {
         dotup.link(origin, &args.destination);
