@@ -193,57 +193,96 @@ impl Dotup {
         origins: impl Iterator<Item = impl AsRef<Path>>,
         destination: impl AsRef<Path>,
     ) {
-        let origins = {
-            let mut v = Vec::new();
-            for origin in origins {
-                match self.prepare_relative_path(origin.as_ref()) {
-                    Ok(origin) => v.push(origin),
-                    Err(e) => {
-                        println!("invalid link {} : {e}", origin.as_ref().display());
-                        return;
-                    }
+        let mv_result: anyhow::Result<()> = try {
+            let origins = {
+                let mut v = Vec::new();
+                for origin in origins {
+                    v.push(
+                        origin
+                            .as_ref()
+                            .canonicalize()
+                            .context("failed to canonicalize origin path")?,
+                    );
                 }
+                v
+            };
+            let destination = utils::weakly_canonical(destination.as_ref());
+            log::debug!("mv destination : {}", destination.display());
+
+            // if we are moving multiple links then the destination must be a directory
+            if origins.len() > 1 && !destination.is_dir() {
+                println!("destination must be a directory");
+                return;
             }
-            v
+
+            for origin in origins {
+                let destination = if destination.is_dir() {
+                    // unwrap: origin must have a filename
+                    destination.join(origin.file_name().unwrap())
+                } else {
+                    destination.to_owned()
+                };
+                self.mv_one(&origin, &destination)?;
+            }
         };
-        let destination = destination.as_ref();
-
-        // if we are moving multiple links then the destination must be a directory
-        if origins.len() > 1 && destination.is_dir() {
-            println!("destination must be a directory");
-            return;
-        }
-
-        for origin in origins {
-            if let Err(e) = self.mv_one(&origin, destination) {
-                println!("error moving link {} : {e}", origin.display());
-            }
+        if let Err(e) = mv_result {
+            println!("error moving : {e}");
         }
     }
 
     fn mv_one(&mut self, origin: &Path, destination: &Path) -> anyhow::Result<()> {
-        let link_id = match self.depot.link_find(origin)? {
-            Some(link_id) => link_id,
-            None => {
-                return Err(anyhow::anyhow!(format!(
-                    "{} is not a link",
-                    origin.display()
-                )))
+        log::debug!("mv_one : {} to {}", origin.display(), destination.display());
+
+        let relative_origin = self.prepare_relative_path(origin)?;
+        let relative_destination = self.prepare_relative_path(destination)?;
+        match self.depot.link_find(&relative_origin)? {
+            Some(link_id) => {
+                let is_installed = self.symlink_is_installed_by_link_id(link_id)?;
+                let original_origin = self.depot.link_view(link_id).origin().to_owned();
+                log::debug!("is_installed = {is_installed}",);
+                log::debug!("original_origin = {}", original_origin.display());
+                log::debug!("link_destination = {}", relative_destination.display());
+
+                self.depot.link_move(link_id, relative_destination)?;
+                if let Err(e) = std::fs::rename(origin, destination).context("Failed to move file")
+                {
+                    // unwrap: moving the link back to its origin place has to work
+                    self.depot.link_move(link_id, original_origin).unwrap();
+                    return Err(e);
+                }
+                // reinstall because we just moved the origin
+                if is_installed {
+                    self.symlink_install_by_link_id(link_id)
+                        .context("failed to reinstall link while moving")?;
+                }
             }
-        };
-        let is_installed = self.symlink_is_installed_by_link_id(link_id)?;
-        let original_origin = self.depot.link_view(link_id).origin().to_owned();
-        self.depot.link_move(link_id, destination)?;
-        // move the actual file on disk
-        if let Err(e) = std::fs::rename(origin, destination).context("Failed to move file") {
-            // unwrap: moving the link back to its origin place has to work
-            self.depot.link_move(link_id, original_origin).unwrap();
-            return Err(e);
-        }
-        // reinstall because we just moved the origin
-        if is_installed {
-            self.symlink_install_by_link_id(link_id)
-                .context("failed to reinstall link while moving")?;
+            None => {
+                if origin.is_dir() {
+                    let mut links_installed: HashSet<_> = Default::default();
+                    if self.depot.has_links_under(&relative_origin)? {
+                        let links_under: Vec<_> =
+                            self.depot.links_under(&relative_origin)?.collect();
+                        for &link_id in links_under.iter() {
+                            let link_view = self.depot.link_view(link_id);
+                            if self.symlink_is_installed_by_link_id(link_id)? {
+                                links_installed.insert(link_id);
+                            }
+                            // unwrap: the link is under `origin` so stripping the prefix should
+                            // not fail
+                            let origin_extra =
+                                link_view.origin().strip_prefix(&relative_origin).unwrap();
+                            let new_destination = relative_destination.join(origin_extra);
+                            self.depot.link_move(link_id, new_destination)?;
+                        }
+                    }
+                    std::fs::rename(origin, destination)?;
+                    for link_id in links_installed {
+                        self.symlink_install_by_link_id(link_id)?;
+                    }
+                } else {
+                    std::fs::rename(origin, destination)?;
+                }
+            }
         }
         Ok(())
     }
