@@ -4,4 +4,7 @@ use std::path::PathBuf;
 pub struct Config {
     pub archive_path: PathBuf,
     pub install_path: PathBuf,
+    pub working_path: PathBuf,
 }
+
+impl Config {}

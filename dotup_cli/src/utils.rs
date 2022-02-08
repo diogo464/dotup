@@ -160,3 +160,23 @@ pub fn collect_read_dir_split(
         .map(|e| e.path())
         .partition(|p| p.is_dir()))
 }
+
+/// Checks if `path` is inside a git repository
+pub fn path_is_in_git_repo(path: &Path) -> bool {
+    let mut path = if !path.is_absolute() {
+        dbg!(dotup::utils::weakly_canonical(path))
+    } else {
+        path.to_owned()
+    };
+    let recurse = path.pop();
+    path.push(".git");
+    if path.is_dir() {
+        return true;
+    }
+    if recurse {
+        path.pop();
+        return path_is_in_git_repo(&path);
+    } else {
+        return false;
+    }
+}

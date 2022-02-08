@@ -194,6 +194,24 @@ impl Depot {
         None
     }
 
+    pub fn rename_link(&mut self, link_id: LinkID, origin: &Path) {
+        // TODO: improve
+        if let Some(id) = self.get_link_id_by_path(origin) {
+            if link_id != id {
+                self.remove_link(id);
+            }
+        }
+        if let Some(link) = self.links.get_mut(link_id) {
+            let origin_canonical = utils::weakly_canonical(origin);
+            if !origin_canonical.starts_with(&self.base_path) {
+                panic!("new origin outside depot");
+            }
+
+            link.origin = origin_canonical;
+            link.origin_canonical = utils::weakly_canonical(&link.origin);
+        }
+    }
+
     /// checks if there are any linked files/directories under the path `path`
     /// if `path` is a path to a file and that file is linked then this function returns true
     pub fn subpath_has_links(&self, path: &Path) -> bool {

@@ -58,6 +58,7 @@ struct Opts {
 enum SubCommand {
     Init(commands::init::Opts),
     Link(commands::link::Opts),
+    Mv(commands::mv::Opts),
     Status(commands::status::Opts),
     Unlink(commands::unlink::Opts),
     Install(commands::install::Opts),
@@ -89,16 +90,19 @@ fn main() -> anyhow::Result<()> {
         Some(path) => path,
         None => utils::home_directory()?,
     };
+    let working_path = std::env::current_dir().expect("Failed to obtain current working directory");
     log::debug!("Archive path : {}", archive_path.display());
 
     let config = Config {
         archive_path,
         install_path,
+        working_path,
     };
 
     match opts.subcmd {
         SubCommand::Init(opts) => commands::init::main(config, opts),
         SubCommand::Link(opts) => commands::link::main(config, opts),
+        SubCommand::Mv(opts) => commands::mv::main(config, opts),
         SubCommand::Status(opts) => commands::status::main(config, opts),
         SubCommand::Unlink(opts) => commands::unlink::main(config, opts),
         SubCommand::Install(opts) => commands::install::main(config, opts),
