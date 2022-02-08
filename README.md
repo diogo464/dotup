@@ -3,7 +3,7 @@ A CLI tool to help symlink your dotfiles into place.
 
 ## Installation
 ```
-$ cargo install --git https://github.com/diogo464/dotup dotup_cli
+$ cargo install --git https://github.com/diogo464/dotup
 ```
 
 ## Usage
