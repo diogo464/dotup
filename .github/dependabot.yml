@@ -3,13 +3,4 @@ updates:
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
-      interval: "weekly"
-  - package-ecosystem: "cargo"
-    directory: "/dotup"
-    schedule:
-      interval: "weekly"
-  - package-ecosystem: "cargo"
-    directory: "/dotup_cli"
-    schedule:
-      interval: "weekly"
-
+      interval: "monthly"
