@@ -96,6 +96,7 @@ dependencies = [
  "log",
  "serde",
  "slotmap",
+ "thiserror",
  "toml",
 ]
 
