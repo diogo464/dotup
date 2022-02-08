@@ -43,7 +43,7 @@ mod depot {
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
-    pub enum NodeSearchResult {
+    enum NodeSearchResult {
         Found(NodeID),
         /// the closest NodeID up the the search point.
         NotFound(NodeID),
@@ -436,6 +436,7 @@ mod depot {
             self.link_move_unchecked(link_id, destination)
         }
 
+        #[allow(unused)]
         pub fn link_search(&self, path: impl AsRef<Path>) -> Result<SearchResult> {
             let path = path.as_ref();
             path_verify(path)?;
@@ -568,7 +569,7 @@ mod depot {
     }
 
     fn path_parent_or_empty(path: &Path) -> &Path {
-        path.parent().unwrap_or(Path::new(""))
+        path.parent().unwrap_or_else(|| Path::new(""))
     }
 
     /// Iterate over the components of a path.
@@ -879,7 +880,6 @@ pub mod dotup {
 
     #[derive(Debug)]
     struct CanonicalPair {
-        link_id: LinkID,
         origin: PathBuf,
         destination: PathBuf,
     }
@@ -1028,11 +1028,7 @@ pub mod dotup {
 
         pub fn install(&self, paths: impl Iterator<Item = impl AsRef<Path>>) {
             let install_result: anyhow::Result<()> = try {
-                let mut link_ids = HashSet::<LinkID>::default();
-                for path in paths {
-                    let path = self.prepare_relative_path(path.as_ref())?;
-                    link_ids.extend(self.depot.links_under(&path)?);
-                }
+                let link_ids = self.link_ids_from_paths_iter(paths)?;
                 self.depot.links_verify_install(link_ids.iter().copied())?;
 
                 for link_id in link_ids {
@@ -1045,20 +1041,16 @@ pub mod dotup {
         }
 
         pub fn uninstall(&self, paths: impl Iterator<Item = impl AsRef<Path>>) {
-            for origin in paths {
-                let uninstall_result: anyhow::Result<()> = try {
-                    let origin = self.prepare_relative_path(origin.as_ref())?;
-                    let canonical_pairs = self.canonical_pairs_under(&origin)?;
-                    for pair in canonical_pairs {
-                        self.symlink_uninstall(&pair.origin, &pair.destination)?;
+            let uninstall_result: anyhow::Result<()> = try {
+                let link_ids = self.link_ids_from_paths_iter(paths)?;
+                for link_id in link_ids {
+                    if self.symlink_is_installed_by_link_id(link_id)? {
+                        self.symlink_uninstall_by_link_id(link_id)?;
                     }
-                };
-                if let Err(e) = uninstall_result {
-                    println!(
-                        "error while uninstalling {} : {e}",
-                        origin.as_ref().display()
-                    );
                 }
+            };
+            if let Err(e) = uninstall_result {
+                println!("error while uninstalling {e}",);
             }
         }
 
@@ -1135,7 +1127,7 @@ pub mod dotup {
         fn status_path_to_item(&self, canonical_path: &Path) -> anyhow::Result<StatusItem> {
             debug_assert!(canonical_path.is_absolute());
             debug_assert!(canonical_path.exists());
-            let relative_path = self.prepare_relative_path(&canonical_path)?;
+            let relative_path = self.prepare_relative_path(canonical_path)?;
 
             let item = if canonical_path.is_dir() {
                 if let Some(link_id) = self.depot.link_find(&relative_path)? {
@@ -1189,19 +1181,17 @@ pub mod dotup {
                         is_directory: true,
                     }
                 }
+            } else if let Some(link_id) = self.depot.link_find(&relative_path)? {
+                let destination = self.depot.link_view(link_id).destination().to_owned();
+                StatusItem::Link {
+                    origin: relative_path,
+                    destination,
+                    is_directory: false,
+                }
             } else {
-                if let Some(link_id) = self.depot.link_find(&relative_path)? {
-                    let destination = self.depot.link_view(link_id).destination().to_owned();
-                    StatusItem::Link {
-                        origin: relative_path,
-                        destination,
-                        is_directory: false,
-                    }
-                } else {
-                    StatusItem::Unlinked {
-                        origin: relative_path,
-                        is_directory: false,
-                    }
+                StatusItem::Unlinked {
+                    origin: relative_path,
+                    is_directory: false,
                 }
             };
             Ok(item)
@@ -1214,7 +1204,7 @@ pub mod dotup {
             }
             fn origin_color(exists: bool, is_installed: bool) -> Color {
                 if !exists {
-                    return Color::Red;
+                    Color::Red
                 } else if is_installed {
                     Color::Green
                 } else {
@@ -1281,14 +1271,16 @@ pub mod dotup {
             Ok(relative.to_owned())
         }
 
-        // returns the canonical pairs for all links under `path`.
-        fn canonical_pairs_under(&self, path: &Path) -> anyhow::Result<Vec<CanonicalPair>> {
-            let origin = self.prepare_relative_path(path)?;
-            let mut canonical_pairs = Vec::new();
-            for link_id in self.depot.links_under(origin)? {
-                canonical_pairs.push(self.canonical_pair_from_link_id(link_id));
+        fn link_ids_from_paths_iter(
+            &self,
+            paths: impl Iterator<Item = impl AsRef<Path>>,
+        ) -> anyhow::Result<Vec<LinkID>> {
+            let mut link_ids = HashSet::<LinkID>::default();
+            for path in paths {
+                let path = self.prepare_relative_path(path.as_ref())?;
+                link_ids.extend(self.depot.links_under(&path)?);
             }
-            Ok(canonical_pairs)
+            Ok(Vec::from_iter(link_ids.into_iter()))
         }
 
         fn symlink_is_installed_by_link_id(&self, link_id: LinkID) -> anyhow::Result<bool> {
@@ -1382,7 +1374,6 @@ pub mod dotup {
             let canonical_origin = self.depot_dir.join(relative_origin);
             let canonical_destination = self.install_base.join(relative_destination);
             CanonicalPair {
-                link_id,
                 origin: canonical_origin,
                 destination: canonical_destination,
             }
@@ -1562,7 +1553,7 @@ mod utils {
             );
             assert_eq!(
                 PathBuf::from("/home/user/configs/nvim/lua/setup.lua"),
-                weakly_canonical_cwd("configs/nvim/lua/setup.lua", cwd.clone())
+                weakly_canonical_cwd("configs/nvim/lua/setup.lua", cwd)
             );
         }
     }
@@ -1622,7 +1613,6 @@ fn main() -> anyhow::Result<()> {
         2 => "debug",
         _ => "trace",
     };
-    let log_level = "trace";
 
     Logger::try_with_env_or_str(log_level)?
         .format(flexi_logger::colored_default_format)
@@ -1678,12 +1668,10 @@ fn command_link(global_flags: Flags, args: LinkArgs) -> anyhow::Result<()> {
     let mut dotup = utils::read_dotup(&global_flags)?;
     let origins = if args.directory {
         vec![args.origin]
+    } else if args.origin.is_dir() {
+        utils::collect_files_in_dir_recursive(args.origin)?
     } else {
-        if args.origin.is_dir() {
-            utils::collect_files_in_dir_recursive(args.origin)?
-        } else {
-            vec![args.origin]
-        }
+        vec![args.origin]
     };
     for origin in origins {
         dotup.link(origin, &args.destination);
