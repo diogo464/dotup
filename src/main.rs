@@ -12,8 +12,11 @@ use utils::DEFAULT_DEPOT_FILE_NAME;
 
 #[derive(Parser, Debug)]
 pub struct Flags {
+    /// Path to the depot file, default to `.depot`.
     #[clap(long)]
     depot: Option<PathBuf>,
+
+    /// Path to the install base, defaults to the home directory.
     #[clap(long)]
     install_base: Option<PathBuf>,
 }
@@ -75,6 +78,10 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
+/// Creates an empty depot file if one doesnt already exist.
+///
+/// By default this will create the file in the current directory
+/// but the `path` option can be used to change this path.
 #[derive(Parser, Debug)]
 struct InitArgs {
     path: Option<PathBuf>,
@@ -99,6 +106,11 @@ fn command_init(_global_flags: Flags, args: InitArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Creates links
+///
+/// If a link is created for a file that already had a link then the old link will be overwritten.
+/// By default creating a link to a directory will recursively link all files under that
+/// directory, to actually link a directory use the --directory flag.
 #[derive(Parser, Debug)]
 struct LinkArgs {
     #[clap(long)]
@@ -125,6 +137,11 @@ fn command_link(global_flags: Flags, args: LinkArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Unlinks files/directories.
+///
+/// This will recursively remove links. If a path is a directory then it will remove all links
+/// recursively.
+/// The links are not uninstall by default, see the --uninstall parameter.
 #[derive(Parser, Debug)]
 struct UnlinkArgs {
     #[clap(long)]
@@ -140,6 +157,10 @@ fn command_unlink(global_flags: Flags, args: UnlinkArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Install links. (Creates symlinks).
+///
+/// Installing a link will create the necessary directories.
+/// If a file or directory already exists at the location a link would be installed this command will fail.
 #[derive(Parser, Debug)]
 struct InstallArgs {
     #[clap(long)]
@@ -154,6 +175,11 @@ fn command_install(global_flags: Flags, args: InstallArgs) -> anyhow::Result<()>
     Ok(())
 }
 
+/// Uninstalls links. (Removes symlinks).
+///
+/// Uninstalling a link for a file that didn't have a link will do nothing.
+/// Uninstalling a directory will recursively uninstall all files under it.
+/// Symlinks are only deleted if they were pointing to the correct file.
 #[derive(Parser, Debug)]
 struct UninstallArgs {
     paths: Vec<PathBuf>,
@@ -165,6 +191,7 @@ fn command_uninstall(global_flags: Flags, args: UninstallArgs) -> anyhow::Result
     Ok(())
 }
 
+/// Moves files/directories and updates links.
 #[derive(Parser, Debug)]
 struct MvArgs {
     paths: Vec<PathBuf>,
@@ -183,6 +210,7 @@ fn command_mv(global_flags: Flags, args: MvArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Shows information about links
 #[derive(Parser, Debug)]
 struct StatusArgs {}
 
