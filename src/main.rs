@@ -116,25 +116,27 @@ struct LinkArgs {
     #[clap(long)]
     directory: bool,
 
-    origin: PathBuf,
+    origins: Vec<PathBuf>,
 
     destination: PathBuf,
 }
 
 fn command_link(global_flags: Flags, args: LinkArgs) -> anyhow::Result<()> {
     let mut dotup = utils::read_dotup(&global_flags)?;
-    if !args.directory && args.origin.is_dir() {
-        let directory = args.origin;
-        let origins = utils::collect_files_in_dir_recursive(&directory)?;
-        for origin in origins {
-            // unwrap: origin is under directory so stripping should not fail
-            let path_extra = origin.strip_prefix(&directory).unwrap();
-            let destination = args.destination.join(path_extra);
-            dotup.link(&origin, &destination);
-        }
-    } else {
-        dotup.link(&args.origin, &args.destination);
-    };
+    for origin in args.origins {
+        if !args.directory && origin.is_dir() {
+            let directory = origin;
+            let origins = utils::collect_files_in_dir_recursive(&directory)?;
+            for origin in origins {
+                // unwrap: origin is under directory so stripping should not fail
+                let path_extra = origin.strip_prefix(&directory).unwrap();
+                let destination = args.destination.join(path_extra);
+                dotup.link(&origin, &destination);
+            }
+        } else {
+            dotup.link(&origin, &args.destination);
+        };
+    }
     utils::write_dotup(&dotup)?;
     Ok(())
 }

@@ -131,8 +131,8 @@ impl Dotup {
 
     pub fn link(&mut self, origin: impl AsRef<Path>, destination: impl AsRef<Path>) {
         let link_result: anyhow::Result<()> = try {
-            let origin = self.prepare_relative_path(origin.as_ref())?;
-            let destination = destination.as_ref();
+            let origin = self.prepare_relative_origin(origin.as_ref())?;
+            let destination = self.prepare_relative_destination(destination.as_ref())?;
             self.depot.link_create(origin, destination)?;
         };
         match link_result {
@@ -144,7 +144,7 @@ impl Dotup {
     pub fn unlink(&mut self, paths: impl Iterator<Item = impl AsRef<Path>>, uninstall: bool) {
         for origin in paths {
             let unlink_result: anyhow::Result<()> = try {
-                let origin = self.prepare_relative_path(origin.as_ref())?;
+                let origin = self.prepare_relative_origin(origin.as_ref())?;
                 let links_under: Vec<_> = self.depot.links_under(&origin)?.collect();
                 for link_id in links_under {
                     if uninstall && self.symlink_is_installed_by_link_id(link_id)? {
@@ -233,8 +233,8 @@ impl Dotup {
     fn mv_one(&mut self, origin: &Path, destination: &Path) -> anyhow::Result<()> {
         log::debug!("mv_one : {} to {}", origin.display(), destination.display());
 
-        let relative_origin = self.prepare_relative_path(origin)?;
-        let relative_destination = self.prepare_relative_path(destination)?;
+        let relative_origin = self.prepare_relative_origin(origin)?;
+        let relative_destination = self.prepare_relative_origin(destination)?;
         match self.depot.link_find(&relative_origin)? {
             Some(link_id) => {
                 let is_installed = self.symlink_is_installed_by_link_id(link_id)?;
@@ -307,7 +307,7 @@ impl Dotup {
     fn status_path_to_item(&self, canonical_path: &Path) -> anyhow::Result<StatusItem> {
         debug_assert!(canonical_path.is_absolute());
         debug_assert!(canonical_path.exists());
-        let relative_path = self.prepare_relative_path(canonical_path)?;
+        let relative_path = self.prepare_relative_origin(canonical_path)?;
 
         let item = if canonical_path.is_dir() {
             if let Some(link_id) = self.depot.link_find(&relative_path)? {
@@ -442,12 +442,20 @@ impl Dotup {
             .unwrap_or_default()
     }
 
-    fn prepare_relative_path(&self, origin: &Path) -> anyhow::Result<PathBuf> {
-        let canonical = utils::weakly_canonical(origin);
+    fn prepare_relative_path(path: &Path, base: &Path) -> anyhow::Result<PathBuf> {
+        let canonical = utils::weakly_canonical(path);
         let relative = canonical
-            .strip_prefix(&self.depot_dir)
+            .strip_prefix(base)
             .context("Invalid origin path, not under depot directory")?;
         Ok(relative.to_owned())
+    }
+
+    fn prepare_relative_origin(&self, path: &Path) -> anyhow::Result<PathBuf> {
+        Self::prepare_relative_path(path, &self.depot_dir)
+    }
+
+    fn prepare_relative_destination(&self, path: &Path) -> anyhow::Result<PathBuf> {
+        Self::prepare_relative_path(path, &self.install_base)
     }
 
     fn link_ids_from_paths_iter(
@@ -456,7 +464,7 @@ impl Dotup {
     ) -> anyhow::Result<Vec<LinkID>> {
         let mut link_ids = HashSet::<LinkID>::default();
         for path in paths {
-            let path = self.prepare_relative_path(path.as_ref())?;
+            let path = self.prepare_relative_origin(path.as_ref())?;
             link_ids.extend(self.depot.links_under(&path)?);
         }
         Ok(Vec::from_iter(link_ids.into_iter()))
