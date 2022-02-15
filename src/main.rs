@@ -214,10 +214,13 @@ fn command_mv(global_flags: Flags, args: MvArgs) -> anyhow::Result<()> {
 
 /// Shows information about links
 #[derive(Parser, Debug)]
-struct StatusArgs {}
+struct StatusArgs {
+    #[clap(default_value = ".")]
+    paths: Vec<PathBuf>,
+}
 
-fn command_status(global_flags: Flags, _args: StatusArgs) -> anyhow::Result<()> {
+fn command_status(global_flags: Flags, args: StatusArgs) -> anyhow::Result<()> {
     let dotup = utils::read_dotup(&global_flags)?;
-    dotup.status();
+    dotup.status(args.paths.into_iter());
     Ok(())
 }

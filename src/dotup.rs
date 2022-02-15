@@ -287,11 +287,18 @@ impl Dotup {
         Ok(())
     }
 
-    pub fn status(&self) {
+    pub fn status(&self, paths: impl Iterator<Item = impl AsRef<Path>>) {
         let status_result: anyhow::Result<()> = try {
-            let canonical_dir = utils::current_working_directory();
-            let item = self.status_path_to_item(&canonical_dir)?;
-            self.status_print_item(item, 0)?;
+            // canonicalize and remove paths whose parent we already have
+            let paths = paths.map(utils::weakly_canonical).collect::<HashSet<_>>();
+            let paths = paths
+                .iter()
+                .filter(|p| !paths.iter().any(|x| p.starts_with(x) && p != &x));
+
+            for path in paths {
+                let item = self.status_path_to_item(path)?;
+                self.status_print_item(item, 0)?;
+            }
         };
         if let Err(e) = status_result {
             println!("error while displaying status : {e}");
