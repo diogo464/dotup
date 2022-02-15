@@ -116,6 +116,7 @@ struct LinkArgs {
     #[clap(long)]
     directory: bool,
 
+    #[clap(min_values = 1)]
     origins: Vec<PathBuf>,
 
     destination: PathBuf,
@@ -198,18 +199,15 @@ fn command_uninstall(global_flags: Flags, args: UninstallArgs) -> anyhow::Result
 /// Moves files/directories and updates links.
 #[derive(Parser, Debug)]
 struct MvArgs {
-    paths: Vec<PathBuf>,
+    #[clap(min_values = 1)]
+    origins: Vec<PathBuf>,
+
+    destination: PathBuf,
 }
 
 fn command_mv(global_flags: Flags, args: MvArgs) -> anyhow::Result<()> {
     let mut dotup = utils::read_dotup(&global_flags)?;
-    let mut paths = args.paths;
-    if paths.len() < 2 {
-        return Err(anyhow::anyhow!("mv requires atleast 2 arguments"));
-    }
-    let to = paths.pop().unwrap();
-    let from = paths;
-    dotup.mv(from.iter(), &to);
+    dotup.mv(args.origins.into_iter(), args.destination);
     utils::write_dotup(&dotup)?;
     Ok(())
 }
