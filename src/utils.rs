@@ -137,7 +137,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn weak_canonical_test() {
+    fn test_weakly_canonical() {
         let cwd = PathBuf::from("/home/user");
         assert_eq!(
             PathBuf::from("/home/dest"),
