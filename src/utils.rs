@@ -125,6 +125,13 @@ pub fn current_working_directory() -> PathBuf {
     std::env::current_dir().expect("Failed to obtain current working directory")
 }
 
+pub fn path_ends_with_slash(path: impl AsRef<Path>) -> bool {
+    path.as_ref()
+        .to_str()
+        .map(|s| s.ends_with('/'))
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,5 +159,20 @@ mod tests {
             PathBuf::from("/home/user/configs/nvim/lua/setup.lua"),
             weakly_canonical_cwd("configs/nvim/lua/setup.lua", cwd)
         );
+    }
+
+    #[test]
+    fn test_path_ends_with_slash() {
+        assert!(!path_ends_with_slash(""));
+        assert!(!path_ends_with_slash("/f1"));
+        assert!(!path_ends_with_slash("/f1/f2"));
+        assert!(!path_ends_with_slash("./f1/f2"));
+        assert!(!path_ends_with_slash("./f1/f2/../f3"));
+
+        assert!(path_ends_with_slash("/"));
+        assert!(path_ends_with_slash("/f1/"));
+        assert!(path_ends_with_slash("f1/"));
+        assert!(path_ends_with_slash("f1/f2/"));
+        assert!(path_ends_with_slash("f1/f2/../f3/"));
     }
 }

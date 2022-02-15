@@ -132,7 +132,13 @@ impl Dotup {
     pub fn link(&mut self, origin: impl AsRef<Path>, destination: impl AsRef<Path>) {
         let link_result: anyhow::Result<()> = try {
             let origin = self.prepare_relative_origin(origin.as_ref())?;
-            let destination = self.prepare_relative_destination(destination.as_ref())?;
+            let destination_ends_with_slash = utils::path_ends_with_slash(destination.as_ref());
+            let mut destination = self.prepare_relative_destination(destination.as_ref())?;
+            if destination_ends_with_slash {
+                if let Some(filename) = origin.file_name() {
+                    destination.push(filename);
+                }
+            }
             self.depot.link_create(origin, destination)?;
         };
         match link_result {
