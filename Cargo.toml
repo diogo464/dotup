@@ -13,5 +13,5 @@ flexi_logger = "0.22.3"
 log = "0.4.16"
 serde = { version = "1.0.136", features = ["derive"] }
 slotmap = "1.0.6"
-thiserror = "1.0.30"
+thiserror = "1.0.31"
 toml = "0.5.8"
