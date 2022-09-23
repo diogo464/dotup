@@ -1,17 +1,17 @@
 [package]
 name = "dotup"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ansi_term = "0.12.1"
-anyhow = "1.0.53"
-clap = { version = "3.0.14", features = ["derive"] }
-flexi_logger = "0.22.3"
-log = "0.4.14"
-serde = { version = "1.0.136", features = ["derive"] }
+anyhow = "1.0.65"
+clap = { version = "3.2.21", features = ["derive"] }
+env_logger = "0.9.0"
+globset = "0.4.9"
+log = "0.4.17"
+nom = "7.1.1"
+nom_locate = "4.0.0"
 slotmap = "1.0.6"
-thiserror = "1.0.30"
-toml = "0.5.8"
+thiserror = "1.0.35"
