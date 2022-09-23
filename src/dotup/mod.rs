@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use slotmap::{Key, SlotMap};
+use slotmap::SlotMap;
 use thiserror::Error;
 
 pub use paths::*;
@@ -162,7 +162,7 @@ impl Dotup {
     }
 
     fn find_group_by_name_rooted(&self, root: GroupID, name: &str) -> Option<GroupID> {
-        let trimmed = name.trim_start_matches(".");
+        let trimmed = name.trim_start_matches('.');
         let rel_levels = name.len() - trimmed.len();
         let mut current = self.root_id;
 
@@ -176,7 +176,7 @@ impl Dotup {
             }
         }
 
-        for comp in trimmed.split(".") {
+        for comp in trimmed.split('.') {
             let group = &self.groups[current];
             let child_id = group.children.get(comp)?;
             current = *child_id;
@@ -204,12 +204,9 @@ impl Dotup {
             .items
             .drain_filter(|item| std::matches!(item, cfg::GroupItem::Action(_)))
         {
-            match item {
-                cfg::GroupItem::Action(action) => {
-                    let action = cfg_action_to_action(action)?;
-                    group.actions.push(action);
-                }
-                _ => {}
+            if let cfg::GroupItem::Action(action) = item {
+                let action = cfg_action_to_action(action)?;
+                group.actions.push(action);
             }
         }
 
@@ -218,11 +215,8 @@ impl Dotup {
         parent.children.insert(group_cfg.name, group_id);
 
         for item in group_cfg.items {
-            match item {
-                cfg::GroupItem::Group(group) => {
-                    self.insert_group(group_id, group)?;
-                }
-                _ => {}
+            if let cfg::GroupItem::Group(group) = item {
+                self.insert_group(group_id, group)?;
             }
         }
 

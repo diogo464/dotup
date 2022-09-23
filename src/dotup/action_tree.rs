@@ -55,6 +55,7 @@ impl TreeAction {
 
 // -------------------- TreeNodeKind -------------------- //
 
+#[allow(unused)]
 impl TreeNodeKind {
     fn as_action(&self) -> ActionID {
         match self {
@@ -116,7 +117,7 @@ impl ActionTree {
             path: target.to_owned(),
             action,
         });
-        self.force_insert_at(&target, TreeNodeKind::Action(action_id));
+        self.force_insert_at(target, TreeNodeKind::Action(action_id));
         action_id
     }
 
@@ -166,7 +167,7 @@ impl ActionTree {
                 log::trace!("creating symlink {:?} -> {:?}", source, target);
                 std::os::unix::fs::symlink(source, target)?;
             }
-            Action::Copy { source } => todo!(),
+            Action::Copy { source: _ } => todo!(),
         }
         Ok(())
     }
@@ -191,10 +192,6 @@ impl ActionTree {
             }
         }
         Ok(())
-    }
-
-    pub fn actions(&self) -> impl Iterator<Item = &TreeAction> {
-        self.actions.values()
     }
 
     pub fn action_ids(&self) -> impl Iterator<Item = ActionID> + '_ {
@@ -250,13 +247,10 @@ impl ActionTree {
             }
         }
         let prev_kind = std::mem::replace(&mut self.nodes[curr].kind, kind);
-        match prev_kind {
-            TreeNodeKind::SubTree(children) => {
-                for &child in children.iter() {
-                    self.remove_node(child);
-                }
+        if let TreeNodeKind::SubTree(children) = prev_kind {
+            for &child in children.iter() {
+                self.remove_node(child);
             }
-            _ => {}
         }
         curr
     }

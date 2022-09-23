@@ -138,7 +138,7 @@ impl<'s> nom::error::ParseError<Span<'s>> for ParseError {
         Self::new(location_from_span(input), format!("error kind: {kind:?}"))
     }
 
-    fn append(input: Span, kind: nom::error::ErrorKind, other: Self) -> Self {
+    fn append(_input: Span, _kind: nom::error::ErrorKind, other: Self) -> Self {
         other
     }
 
@@ -195,6 +195,7 @@ impl std::fmt::Display for Location {
 }
 
 impl KeyValue {
+    #[allow(unused)]
     fn new(key: impl Into<String>, value: impl Into<String>) -> Self {
         Self {
             key: key.into(),
