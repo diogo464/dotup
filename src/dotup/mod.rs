@@ -274,7 +274,7 @@ impl Dotup {
 
         let cwd = AbsPathBuf::try_from(
             cwd.canonicalize()
-                .expect("failed to canonicalize current workind directory path"),
+                .expect("failed to canonicalize current working directory path"),
         )
         .unwrap();
         let home = AbsPathBuf::try_from(
