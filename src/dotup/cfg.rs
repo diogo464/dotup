@@ -3,10 +3,11 @@ use std::fmt::Write;
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_while},
-    character::complete::{alphanumeric1, multispace0, multispace1, space1},
+    character::complete::{multispace0, multispace1, space1},
     combinator::map,
     multi::separated_list0,
     sequence::{delimited, preceded},
+    InputTakeAtPosition,
 };
 
 type Span<'s> = nom_locate::LocatedSpan<&'s str>;
@@ -215,7 +216,7 @@ fn linesep(i: Span) -> IResult<Span, Span> {
 }
 
 fn keyvalue(i: Span) -> IResult<Span, KeyValue> {
-    let (i, key) = alphanumeric1(i)?;
+    let (i, key) = ident1(i)?;
     let (i, _) = tag("=")(i)?;
     let (i, val) = delimited(tag("\""), take_while(is_value_char), tag("\""))(i)?;
     Ok((
@@ -250,7 +251,7 @@ fn comment(i: Span) -> IResult<Span, Comment> {
 
 fn action(i: Span) -> IResult<Span, Action> {
     let location = location_from_span(i);
-    let (i, kind) = alphanumeric1(i)?;
+    let (i, kind) = ident1(i)?;
     let (i, keyvalues) = preceded(space1, keyvalues)(i)?;
     Ok((
         i,
@@ -275,7 +276,7 @@ fn group(i: Span) -> IResult<Span, Group> {
 
     let (i, _) = tag("group")(i)?;
     let (i, _) = multispace1(i)?;
-    let (i, name) = alphanumeric1(i)?;
+    let (i, name) = ident1(i)?;
     let (i, _) = multispace0(i)?;
     let (i, _) = tag("{")(i)?;
     let (i, _) = multispace0(i)?;
@@ -316,6 +317,10 @@ fn location_from_span(span: Span) -> Location {
     Location::new(span.location_line(), span.get_utf8_column() as u32)
 }
 
+fn ident1(i: Span) -> IResult<Span, Span> {
+    i.split_at_position_complete(|c: char| !(c.is_alphanumeric() || c == '_' || c == '-'))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,6 +331,21 @@ mod tests {
         let (rem, kv) = keyvalue(input).unwrap();
         assert!(rem.is_empty());
         assert_eq!(kv, KeyValue::new("key", "value"),);
+    }
+
+    #[test]
+    fn parse_keyvalue_dash() {
+        // key with dash
+        let input = Span::new(r#"key-value="value""#);
+        let (rem, kv) = keyvalue(input).unwrap();
+        assert!(rem.is_empty());
+        assert_eq!(kv, KeyValue::new("key-value", "value"),);
+
+        // value with dash
+        let input = Span::new(r#"key="value-1""#);
+        let (rem, kv) = keyvalue(input).unwrap();
+        assert!(rem.is_empty());
+        assert_eq!(kv, KeyValue::new("key", "value-1"),);
     }
 
     #[test]
