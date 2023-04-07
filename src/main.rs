@@ -1,12 +1,13 @@
 #![feature(drain_filter)]
+#![feature(io_error_other)]
 
-//pub mod config;
 pub mod dotup;
 
 use std::path::PathBuf;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
+use dotup::InstallParams;
 
 #[derive(Parser, Debug)]
 struct GlobalFlags {
@@ -27,6 +28,9 @@ enum SubCommand {
 
 #[derive(Parser, Debug)]
 struct InstallArgs {
+    #[clap(short, long)]
+    force: bool,
+
     groups: Vec<String>,
 }
 
@@ -47,6 +51,7 @@ struct FormatArgs {}
 struct Args {
     #[clap(flatten)]
     globals: GlobalFlags,
+
     #[clap(subcommand)]
     command: SubCommand,
 }
@@ -64,6 +69,10 @@ fn main() -> anyhow::Result<()> {
 }
 
 impl GlobalFlags {
+    fn get_working_dir(&self) -> PathBuf {
+        self.config.parent().unwrap().to_path_buf()
+    }
+
     fn base_path_or_default(&self) -> PathBuf {
         self.base.clone().unwrap_or_else(|| {
             PathBuf::from(std::env::var("HOME").expect("failed to get HOME directory"))
@@ -72,49 +81,29 @@ impl GlobalFlags {
 }
 
 fn command_install(globals: GlobalFlags, args: InstallArgs) -> anyhow::Result<()> {
-    let dotup = dotup::load_file(&globals.config).context("failed to parse config")?;
-    let cwd = std::env::current_dir().context("failed to get current directory")?;
-    let install_params = dotup::InstallParams {
-        cwd: &cwd,
-        home: &globals.base_path_or_default(),
-    };
+    let context = helper_new_context(&globals)?;
+    let dotup = dotup::load_file(context, &globals.config).context("failed to parse config")?;
+    let params = InstallParams { force: args.force };
     for group in args.groups {
-        match dotup.find_group_by_name(&group) {
-            Some(group_id) => dotup.install(install_params, group_id)?,
-            None => log::error!("group not found: {}", group),
-        };
+        dotup::install(&dotup, &params, &group)?;
     }
     Ok(())
 }
 
 fn command_uninstall(globals: GlobalFlags, args: UninstallArgs) -> anyhow::Result<()> {
-    let dotup = dotup::load_file(&globals.config).context("failed to parse config")?;
-    let cwd = std::env::current_dir().context("failed to get current directory")?;
-    let uninstall_params = dotup::UninstallParams {
-        cwd: &cwd,
-        home: &globals.base_path_or_default(),
-    };
+    let context = helper_new_context(&globals)?;
+    let dotup = dotup::load_file(context, &globals.config).context("failed to parse config")?;
     for group in args.groups {
-        match dotup.find_group_by_name(&group) {
-            Some(group_id) => dotup.uninstall(uninstall_params, group_id)?,
-            None => log::error!("group not found: {}", group),
-        };
+        dotup::uninstall(&dotup, &group)?;
     }
     Ok(())
 }
 
 fn command_status(globals: GlobalFlags, args: StatusArgs) -> anyhow::Result<()> {
-    let dotup = dotup::load_file(&globals.config).context("failed to parse config")?;
-    let cwd = std::env::current_dir().context("failed to get current directory")?;
-    let install_params = dotup::InstallParams {
-        cwd: &cwd,
-        home: &globals.base_path_or_default(),
-    };
+    let context = helper_new_context(&globals)?;
+    let dotup = dotup::load_file(context, &globals.config).context("failed to parse config")?;
     for group in args.groups {
-        match dotup.find_group_by_name(&group) {
-            Some(group_id) => dotup.status(install_params, group_id)?,
-            None => log::error!("group not found: {}", group),
-        };
+        dotup::status(&dotup, &group)?;
     }
     Ok(())
 }
@@ -122,4 +111,10 @@ fn command_status(globals: GlobalFlags, args: StatusArgs) -> anyhow::Result<()> 
 fn command_format(globals: GlobalFlags, _args: FormatArgs) -> anyhow::Result<()> {
     dotup::format_file_inplace(&globals.config).context("failed to format config")?;
     Ok(())
+}
+
+fn helper_new_context(globals: &GlobalFlags) -> anyhow::Result<dotup::Context> {
+    let cwd = globals.get_working_dir();
+    let home = globals.base_path_or_default();
+    Ok(dotup::Context::new(cwd, home)?)
 }
