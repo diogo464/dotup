@@ -61,6 +61,7 @@ pub struct InstallParams {
     pub force: bool,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for InstallParams {
     fn default() -> Self {
         Self { force: false }
@@ -241,7 +242,7 @@ pub fn status(dotup: &Dotup, group: &str) -> Result<()> {
 
                     let target = link.target.display();
                     let source = link.source.display();
-                    let installed = is_link_installed(&link)?;
+                    let installed = is_link_installed(link)?;
                     let output = format!(
                         "{}{} -> {}",
                         "  ".repeat(depth as usize + 1),
