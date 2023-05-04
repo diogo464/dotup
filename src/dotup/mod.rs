@@ -182,11 +182,11 @@ pub fn install(dotup: &Dotup, params: &InstallParams, group: &str) -> Result<()>
 
                     // Early return if the symlink already points to the correct source
                     if metadata.is_symlink() && fs_symlink_points_to(&target, &source)? {
-                        return Ok(());
+                        continue;
                     }
 
                     if !prompt_overwrite(params, &target)? {
-                        return Ok(());
+                        continue;
                     }
 
                     fs_remove(&target)?;
