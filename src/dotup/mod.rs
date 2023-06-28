@@ -181,8 +181,15 @@ pub fn install(dotup: &Dotup, params: &InstallParams, group: &str) -> Result<()>
                     let metadata = fs_symlink_metadata(&target)?;
 
                     // Early return if the symlink already points to the correct source
-                    if metadata.is_symlink() && fs_symlink_points_to(&target, &source)? {
-                        continue;
+                    if metadata.is_symlink() {
+                        log::debug!(
+                            "target is a symlink pointing to {}",
+                            fs_read_symlink(&target)?.display()
+                        );
+                        if fs_symlink_points_to(&target, &source)? {
+                            log::debug!("target already points to the correct source, skipping");
+                            continue;
+                        }
                     }
 
                     if !prompt_overwrite(params, &target)? {
@@ -518,10 +525,14 @@ impl KeyValueParser {
 // -------------------- Filesystem -------------------- //
 
 fn fs_exists(path: impl AsRef<Path>) -> Result<bool> {
-    path.as_ref().try_exists().map_err(|err| {
+    let path = path.as_ref();
+    if path.is_symlink() {
+        return Ok(true);
+    }
+    path.try_exists().map_err(|err| {
         Error::Custom(format!(
             "failed to check existence of target '{}': {}",
-            path.as_ref().display(),
+            path.display(),
             err
         ))
     })
@@ -576,7 +587,10 @@ fn fs_symlink_points_to(path: impl AsRef<Path>, target: impl AsRef<Path>) -> Res
     let path = path.as_ref();
     let target = target.as_ref();
     let link_target = fs_read_symlink(path)?;
-    let target_canonical = fs_canonicalize(target)?;
+    let target_canonical = match fs_canonicalize(target) {
+        Ok(canonical) => canonical,
+        Err(_) => return Ok(false),
+    };
     let link_target_canonical = fs_canonicalize(link_target)?;
     Ok(target_canonical == link_target_canonical)
 }
