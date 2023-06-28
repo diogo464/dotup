@@ -308,7 +308,7 @@ fn insert_config_group(
 
     for item in group_cfg
         .items
-        .drain_filter(|item| std::matches!(item, cfg::GroupItem::Action(_)))
+        .extract_if(|item| std::matches!(item, cfg::GroupItem::Action(_)))
     {
         if let cfg::GroupItem::Action(action) = item {
             let action = convert_config_action(&dotup.context, action)?;
